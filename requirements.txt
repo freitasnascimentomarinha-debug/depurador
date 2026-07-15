@@ -1,0 +1,12 @@
+streamlit==1.41.1
+pytesseract>=0.3.10
+Pillow>=10.0
+python-docx>=1.1
+openpyxl>=3.1
+xlrd>=2.0
+requests>=2.31
+pdfplumber>=0.11
+reportlab>=4.2
+openai>=0.27.0
+openrouter>=0.2.0
+python-dotenv>=1.0

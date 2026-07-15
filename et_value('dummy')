@@ -1,0 +1,18 @@
+Help on method upload in module streamlit.testing.v1.element_tree:
+
+uuppllooaadd(filename: 'str', content: 'bytes', mime_type: 'str' = 'application/octet-stream') -> 'Self' method of streamlit.testing.v1.element_tree.FileUploader instance
+    Upload a single file for testing.
+
+    Parameters
+    ----------
+    filename
+        The name of the file.
+    content
+        The file content as bytes.
+    mime_type
+        The MIME type of the file. Defaults to "application/octet-stream".
+
+    Returns
+    -------
+    FileUploader
+        The FileUploader instance for method chaining.
