@@ -1672,6 +1672,11 @@ if processar:
             st.code(traceback.format_exc())
         st.stop()
 
+    # Lista de referência (edital/solicitação de orçamento com número/código PI)
+    # lida antes da extração para que a IA já casei os itens de cada fornecedor
+    # com a numeração/código oficiais durante a própria extração do anexo.
+    lista_referencia_extracao = _ler_master_items(master_file) if master_file else None
+
     with aba_pipeline:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -2204,6 +2209,7 @@ if processar:
                             pre_filtrar=pre_filtrar,
                             limiar_alto=int(limiar_confianca_alta),
                             limiar_baixo=int(limiar_confianca_baixa),
+                            lista_referencia=lista_referencia_extracao,
                         )
                         if result.get("erro") and not result.get("itens"):
                             falhas.append(f"{f['name']}: {result['erro']}")
@@ -2289,7 +2295,7 @@ if processar:
                 # -----------------------------------------------------------
                 # 5) Gera mapa comparativo (se houver orçamentos)
                 # -----------------------------------------------------------
-                master_items = _ler_master_items(master_file) if master_file else None
+                master_items = lista_referencia_extracao
                 rows = []
                 review = []
                 excel_buffer = None

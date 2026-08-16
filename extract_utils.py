@@ -464,6 +464,8 @@ Regras:
 - Numeros devem ser float puro, sem simbolo de moeda ou separador de milhar (ex: 1234.56, nunca "R$ 1.234,56").
 - Nao invente dados que nao estao no texto.
 - Responda em português.
+
+- Se for fornecida uma "LISTA DE REFERÊNCIA" (itens da solicitação de orçamento/edital, com numero_item e codigo oficiais), use-a para identificar a qual item de referência cada item do orçamento corresponde, mesmo quando o fornecedor escreve a descrição com palavras diferentes, abreviada ou incompleta. Quando encontrar correspondência, preencha "numero_item" e "codigo" EXATAMENTE como estão na lista de referência (não invente numeração própria do fornecedor se ela divergir da lista de referência). Se o item do orçamento não corresponder a nenhum item da lista de referência, ainda assim extraia-o normalmente, com numero_item/codigo null se não houver correspondência clara.
 """
 
 
@@ -501,9 +503,30 @@ EXTRACTION_JSON_SCHEMA = {
 }
 
 
+def _formatar_lista_referencia(lista_referencia: list[dict] | None) -> str:
+    """Formata a lista de itens da solicitação de orçamento/edital (numero_item,
+    codigo, descricao) como bloco de contexto para a IA usar no casamento."""
+    if not lista_referencia:
+        return ""
+    linhas = ["LISTA DE REFERÊNCIA (itens oficiais da solicitação de orçamento/edital):"]
+    for it in lista_referencia:
+        numero = it.get("numero_item")
+        codigo = it.get("codigo")
+        descricao = it.get("descricao") or ""
+        partes = []
+        if numero is not None:
+            partes.append(f"nº {numero}")
+        if codigo:
+            partes.append(f"código {codigo}")
+        partes.append(descricao)
+        linhas.append("- " + " | ".join(str(p) for p in partes if p))
+    return "\n".join(linhas)
+
+
 def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
                                    filename_hint: str = None, max_retries: int = 3,
-                                   max_chars: int = 50000, pre_filtrar: bool = True) -> dict:
+                                   max_chars: int = 50000, pre_filtrar: bool = True,
+                                   lista_referencia: list[dict] | None = None) -> dict:
     model = model or DEFAULT_EXTRACTION_MODEL
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -514,6 +537,9 @@ def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
     texto_base = pre_filtrar_texto(text) if pre_filtrar else text
     texto_truncado = len(texto_base) > max_chars
     user_content = texto_base[:max_chars]
+    bloco_referencia = _formatar_lista_referencia(lista_referencia)
+    if bloco_referencia:
+        user_content = f"{bloco_referencia}\n\n{user_content}"
     if filename_hint:
         user_content = f"Nome do arquivo: {filename_hint}\n\n{user_content}"
 
@@ -576,16 +602,22 @@ def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
 def call_openrouter_extract(text: str, api_key: str, model: str = None,
                              filename_hint: str = None, max_retries: int = 3,
                              max_chars: int = 50000, pre_filtrar: bool = True,
-                             escalate: bool = True) -> dict:
+                             escalate: bool = True,
+                             lista_referencia: list[dict] | None = None) -> dict:
     """
     Extração via LLM com escalonamento automático: tenta o modelo barato;
     se a extração falhar ou vier vazia, reextrai UMA vez com o modelo forte
     (ESCALATION_MODEL). O custo das duas chamadas é somado no usage.
+
+    lista_referencia: itens oficiais da solicitação de orçamento/edital
+    (numero_item, codigo, descricao), usados como contexto para a IA casar
+    corretamente itens de fornecedores com nomenclatura diferente.
     """
     model = model or DEFAULT_EXTRACTION_MODEL
     parsed = _call_openrouter_extract_once(
         text, api_key, model=model, filename_hint=filename_hint,
         max_retries=max_retries, max_chars=max_chars, pre_filtrar=pre_filtrar,
+        lista_referencia=lista_referencia,
     )
 
     extracao_ruim = bool(parsed.get("erro")) or not parsed.get("itens")
@@ -594,6 +626,7 @@ def call_openrouter_extract(text: str, api_key: str, model: str = None,
         parsed_forte = _call_openrouter_extract_once(
             text, api_key, model=ESCALATION_MODEL, filename_hint=filename_hint,
             max_retries=max_retries, max_chars=max_chars, pre_filtrar=pre_filtrar,
+            lista_referencia=lista_referencia,
         )
         if parsed_forte.get("itens") or not parsed.get("itens"):
             # usa o resultado do modelo forte; soma o gasto da tentativa barata
@@ -630,7 +663,8 @@ def _render_pdf_paginas_png(path: str, max_paginas: int = 8, resolution: int = 2
 
 def call_openrouter_vision_extract(imagens: list[bytes], api_key: str, model: str = None,
                                     filename_hint: str = None, max_retries: int = 2,
-                                    mime: str = "image/png") -> dict:
+                                    mime: str = "image/png",
+                                    lista_referencia: list[dict] | None = None) -> dict:
     """
     Extracao de itens diretamente da IMAGEM do documento, via modelo multimodal.
 
@@ -645,10 +679,12 @@ def call_openrouter_vision_extract(imagens: list[bytes], api_key: str, model: st
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
+    bloco_referencia = _formatar_lista_referencia(lista_referencia)
     conteudo = [{
         "type": "text",
         "text": (
             (f"Nome do arquivo: {filename_hint}\n" if filename_hint else "")
+            + (f"{bloco_referencia}\n\n" if bloco_referencia else "")
             + "Extraia os itens de orcamento das imagens deste documento, "
               "seguindo exatamente as regras do sistema."
         ),
@@ -879,8 +915,13 @@ def comparar_extracoes(itens_parser: list[dict], itens_ia: list[dict]):
 def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                                  pre_filtrar: bool = True,
                                  limiar_alto: int = 85,
-                                 limiar_baixo: int = 40) -> dict:
-    """Pipeline em camadas: estrutural quando possivel, IA por excecao."""
+                                 limiar_baixo: int = 40,
+                                 lista_referencia: list[dict] | None = None) -> dict:
+    """Pipeline: a IA sempre interpreta o conteudo; a extracao estrutural
+    (quando disponivel) e usada como segunda fonte para conferencia (dupla
+    checagem), nunca para pular a IA por completo. `lista_referencia` (itens
+    oficiais da solicitacao de orcamento/edital) e passada a IA para ajudar
+    a casar itens de fornecedores diferentes mesmo com nomenclatura distinta."""
     tipo = detectar_tipo_e_rotear(path)
     nome_arquivo = os.path.basename(path)
     review = []
@@ -907,45 +948,40 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
         debug_events.append("Biblioteca acionada: Pillow + pytesseract (OCR de imagem)")
         debug_events.append("Biblioteca potencial: requests (chamada IA quando necessario)")
 
-    if tipo == "xlsx":
-        itens = extrair_xlsx_estruturado(path)
-        if itens:
-            fonte_global = "estrutural"
+    if tipo in ("xlsx", "docx"):
+        itens_estrutural = extrair_xlsx_estruturado(path) if tipo == "xlsx" else extrair_docx_estruturado(path)
+        if itens_estrutural:
             texto_base = extract_text(path)
             empresa_det = extrair_razao_social(texto_base)
-            debug_events.append(f"Achado: {len(itens)} item(ns) extraido(s) por modo estrutural")
-            debug_highlights.append("RELEVANTE: processamento 100% estrutural (sem consumo de IA)")
-            return {
-                "empresa": empresa_det or os.path.splitext(nome_arquivo)[0],
-                "itens": itens,
-                "review": review,
-                "confianca_estrutural": 100,
-                "fonte_processamento": fonte_global,
-                "texto_truncado": False,
-                "debug_events": debug_events,
-                "debug_highlights": debug_highlights,
-                "cnpj": extrair_cnpj(texto_base),
-                "telefone": extrair_telefone(texto_base),
-                "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "cost_usd": 0.0,
-                    "estimated": False,
-                },
-            }
+            debug_events.append(f"Achado: {len(itens_estrutural)} item(ns) extraido(s) por modo estrutural")
 
-    if tipo == "docx":
-        itens = extrair_docx_estruturado(path)
-        if itens:
-            fonte_global = "estrutural"
-            texto_base = extract_text(path)
-            empresa_det = extrair_razao_social(texto_base)
-            debug_events.append(f"Achado: {len(itens)} item(ns) extraido(s) por modo estrutural")
-            debug_highlights.append("RELEVANTE: processamento 100% estrutural (sem consumo de IA)")
+            if api_key:
+                llm = call_openrouter_extract(
+                    texto_base, api_key, model=model, filename_hint=nome_arquivo,
+                    pre_filtrar=pre_filtrar, lista_referencia=lista_referencia,
+                )
+                itens_ia = _anotar_fonte_origem(llm.get("itens", []), "ia")
+                itens_finais, conflitos = comparar_extracoes(itens_estrutural, itens_ia)
+                review.extend(conflitos)
+                fonte_global = "dupla_checagem"
+                empresa_final = llm.get("empresa") or empresa_det or os.path.splitext(nome_arquivo)[0]
+                usage = llm.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0,
+                                              "total_tokens": 0, "cost_usd": 0.0, "estimated": True}
+                debug_events.append(f"Achado IA: {len(itens_ia)} item(ns) retornado(s), mesclado com o estrutural")
+                debug_highlights.append(
+                    "RELEVANTE: IA conferiu a extracao estrutural (casamento com lista de referencia quando houver)"
+                )
+            else:
+                itens_finais = itens_estrutural
+                fonte_global = "estrutural"
+                empresa_final = empresa_det or os.path.splitext(nome_arquivo)[0]
+                usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                         "cost_usd": 0.0, "estimated": False}
+                debug_highlights.append("RELEVANTE: sem chave de IA configurada, usado apenas o estrutural")
+
             return {
-                "empresa": empresa_det or os.path.splitext(nome_arquivo)[0],
-                "itens": itens,
+                "empresa": empresa_final,
+                "itens": itens_finais,
                 "review": review,
                 "confianca_estrutural": 100,
                 "fonte_processamento": fonte_global,
@@ -954,13 +990,7 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                 "debug_highlights": debug_highlights,
                 "cnpj": extrair_cnpj(texto_base),
                 "telefone": extrair_telefone(texto_base),
-                "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "cost_usd": 0.0,
-                    "estimated": False,
-                },
+                "usage": usage,
             }
 
         if tipo == "eml":
@@ -1105,7 +1135,8 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                         f"Fallback de visao: {len(imagens)} pagina(s) enviadas como imagem ao modelo multimodal"
                     )
                     llm_visao = call_openrouter_vision_extract(
-                        imagens, api_key, model=model, filename_hint=nome_arquivo
+                        imagens, api_key, model=model, filename_hint=nome_arquivo,
+                        lista_referencia=lista_referencia,
                     )
                     if llm_visao.get("itens"):
                         debug_highlights.append(
@@ -1162,40 +1193,13 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
 
         debug_events.append(f"Percepcao do sistema: confianca estrutural = {confianca}")
 
-        if confianca >= limiar_alto and resultado_estrutural.get("itens"):
-            itens_finais = _anotar_fonte_origem(resultado_estrutural["itens"], "estrutural", pages)
-            fonte_global = "estrutural"
-            empresa_det = extrair_razao_social(texto_base)
-            debug_events.append(f"Achado: {len(itens_finais)} item(ns) por parser estrutural")
-            debug_highlights.append(
-                f"RELEVANTE: confianca estrutural alta ({confianca}) -> IA nao foi necessaria"
-            )
-            return {
-                "empresa": empresa_det or os.path.splitext(nome_arquivo)[0],
-                "itens": itens_finais,
-                "review": review,
-                "confianca_estrutural": confianca,
-                "fonte_processamento": fonte_global,
-                "texto_truncado": False,
-                "cnpj": extrair_cnpj(texto_base),
-                "telefone": extrair_telefone(texto_base),
-                "debug_events": debug_events,
-                "debug_highlights": debug_highlights,
-                "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0,
-                    "cost_usd": 0.0,
-                    "estimated": False,
-                },
-            }
-
         llm = call_openrouter_extract(
             texto_base,
             api_key,
             model=model,
             filename_hint=nome_arquivo,
             pre_filtrar=pre_filtrar,
+            lista_referencia=lista_referencia,
         )
         debug_events.append(f"Biblioteca acionada: requests (modelo IA = {model})")
         texto_truncado = bool(llm.get("texto_truncado"))
@@ -1217,6 +1221,10 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
             debug_events.append(
                 f"Percepcao: dupla checagem executada (parser vs IA), conflitos={len(conflitos)}"
             )
+            if confianca is not None and confianca >= limiar_alto:
+                debug_highlights.append(
+                    f"RELEVANTE: confianca estrutural alta ({confianca}), mas IA conferiu mesmo assim"
+                )
             if conflitos:
                 debug_highlights.append(
                     f"RELEVANTE: divergencias detectadas entre parser e IA ({len(conflitos)})"
@@ -1270,6 +1278,7 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                 llm_visao = call_openrouter_vision_extract(
                     [img_bytes], api_key, model=model,
                     filename_hint=nome_arquivo, mime=mime_img,
+                    lista_referencia=lista_referencia,
                 )
             except Exception:
                 llm_visao = {}
@@ -1343,6 +1352,7 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
             model=model,
             filename_hint=nome_arquivo,
             pre_filtrar=pre_filtrar,
+            lista_referencia=lista_referencia,
         )
         debug_events.append(f"Biblioteca acionada: requests (modelo IA = {model})")
         debug_events.append(f"Achado IA: {len(llm.get('itens', []))} item(ns) retornado(s)")
@@ -1377,6 +1387,7 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
         model=model,
         filename_hint=nome_arquivo,
         pre_filtrar=pre_filtrar,
+        lista_referencia=lista_referencia,
     )
     debug_events.append(f"Biblioteca acionada: requests (modelo IA = {model})")
     debug_events.append(f"Achado IA: {len(llm.get('itens', []))} item(ns) retornado(s)")
