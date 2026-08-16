@@ -30,11 +30,14 @@ _DEFAULTS = {
     "admin_password_hash": "",
 }
 
+PRIMARY_MODEL = _DEFAULTS["modelo"]
+ESCALATION_MODEL = _DEFAULTS["modelo_escalonamento"]
+
 _PBKDF2_ITERS = 200_000
 
 
 def carregar_config(path: str | None = None) -> dict:
-    """Carrega a configuração; devolve defaults para chaves ausentes."""
+    """Carrega a configuração e impõe os modelos definidos para o sistema."""
     cfg = dict(_DEFAULTS)
     try:
         with open(path or _CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -43,12 +46,16 @@ def carregar_config(path: str | None = None) -> dict:
             cfg.update({k: v for k, v in dados.items() if k in _DEFAULTS})
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
+    cfg["modelo"] = PRIMARY_MODEL
+    cfg["modelo_escalonamento"] = ESCALATION_MODEL
     return cfg
 
 
 def salvar_config(cfg: dict, path: str | None = None) -> bool:
-    """Persiste a configuração (somente chaves conhecidas)."""
+    """Persiste a configuração com os modelos definidos para o sistema."""
     dados = {k: cfg.get(k, _DEFAULTS[k]) for k in _DEFAULTS}
+    dados["modelo"] = PRIMARY_MODEL
+    dados["modelo_escalonamento"] = ESCALATION_MODEL
     try:
         with open(path or _CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(dados, f, ensure_ascii=False, indent=2)

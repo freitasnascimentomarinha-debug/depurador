@@ -739,7 +739,7 @@ def _enriquecer_fornecedores_por_orcamentos(conn_proc, conn_budget, processo_id:
                         ai_used = False
                         if need_ai:
                             try:
-                                model_name = st.session_state.get('cfg_model', 'google/gemini-2.5-flash')
+                                model_name = st.session_state.get('cfg_model', 'qwen/qwen3.5-flash-02-23')
                                 ai_cnpj, ai_tel = _call_ai_extract(texto, empresa or nome_anx, api_key, model_name)
                                 if ai_cnpj and not final_cnpj and _validar_cnpj(ai_cnpj):
                                     final_cnpj = ai_cnpj
@@ -1316,8 +1316,7 @@ except Exception:
     _cfg_admin = {}
     _config_administrada = False
 if _config_administrada:
-    if "cfg_model" not in st.session_state:
-        st.session_state.cfg_model = _cfg_admin.get("modelo") or "qwen/qwen3.5-flash-02-23"
+    st.session_state.cfg_model = "qwen/qwen3.5-flash-02-23"
     if "cfg_usar_ia_juiz" not in st.session_state:
         st.session_state.cfg_usar_ia_juiz = bool(_cfg_admin.get("usar_ia_juiz", True))
     if "cfg_classificar_emails_com_ia" not in st.session_state:
@@ -1354,8 +1353,7 @@ if "show_sidebar_item3" not in st.session_state:
     st.session_state.show_sidebar_item3 = False
 if "show_sidebar_item4" not in st.session_state:
     st.session_state.show_sidebar_item4 = False
-if "cfg_model" not in st.session_state:
-    st.session_state.cfg_model = "google/gemini-2.5-flash"
+st.session_state.cfg_model = "qwen/qwen3.5-flash-02-23"
 if "cfg_classificar_emails_com_ia" not in st.session_state:
     st.session_state.cfg_classificar_emails_com_ia = True
 if "cfg_usar_ia_juiz" not in st.session_state:
@@ -1455,7 +1453,7 @@ with st.sidebar:
         processo_titulo_novo = st.text_input("Titulo/descricao do processo", value="")
 
     st.header("3. IA e classificação")
-    model_options = ["google/gemini-2.5-flash", "deepseek/deepseek-chat-v3.2", "openai/gpt-5-mini"]
+    model_options = ["qwen/qwen3.5-flash-02-23"]
 
     if _config_administrada:
         st.markdown(
@@ -1481,8 +1479,7 @@ with st.sidebar:
         else:
             st.warning("Chave OpenRouter não encontrada em secrets.")
 
-        idx_model = model_options.index(st.session_state.cfg_model) if st.session_state.cfg_model in model_options else 0
-        st.selectbox("Modelo", model_options, index=idx_model, key="cfg_model")
+        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
         st.checkbox(
             "IA juiz: decidir casamentos na zona cinzenta (score 60-84)",
             key="cfg_usar_ia_juiz",
@@ -2916,9 +2913,6 @@ with aba_configuracoes:
     # ------------------------------------------------------------------
     with st.expander("🔐 Administração (chave OpenRouter e modelos)", expanded=False):
         _cfg = app_config.carregar_config()
-        _MODELOS_PRINCIPAIS = ["qwen/qwen3.5-flash-02-23", "google/gemini-2.5-flash", "deepseek/deepseek-chat-v3.2", "openai/gpt-5-mini"]
-        _MODELOS_FORTES = ["openai/gpt-5.6-luna", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4.5", "openai/gpt-5"]
-
         if not app_config.tem_senha(_cfg):
             st.info(
                 "Primeiro acesso: defina a senha de administrador. Depois disso, "
@@ -2962,26 +2956,22 @@ with aba_configuracoes:
                     help="Salva localmente em config_app.json (fora do git). "
                          "Usuários finais nunca veem este campo.",
                 )
-                _mod = _cfg.get("modelo") or _MODELOS_PRINCIPAIS[0]
-                idx_m = _MODELOS_PRINCIPAIS.index(_mod) if _mod in _MODELOS_PRINCIPAIS else 0
-                modelo_admin = st.selectbox("Modelo principal (extração/classificação/juiz)", _MODELOS_PRINCIPAIS, index=idx_m)
-                _esc = _cfg.get("modelo_escalonamento") or _MODELOS_FORTES[0]
-                idx_e = _MODELOS_FORTES.index(_esc) if _esc in _MODELOS_FORTES else 0
-                modelo_esc_admin = st.selectbox("Modelo forte (escalonamento automático)", _MODELOS_FORTES, index=idx_e)
+                st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
+                st.caption("Modelo forte: openai/gpt-5.6-luna")
                 juiz_admin = st.checkbox("IA juiz habilitado por padrão", value=bool(_cfg.get("usar_ia_juiz", True)))
                 clf_admin = st.checkbox("Classificação de e-mails com IA por padrão", value=bool(_cfg.get("classificar_emails_com_ia", True)))
                 salvar_admin = st.form_submit_button("Salvar configuração")
             if salvar_admin:
                 _cfg.update({
                     "openrouter_api_key": (nova_chave or "").strip(),
-                    "modelo": modelo_admin,
-                    "modelo_escalonamento": modelo_esc_admin,
+                    "modelo": "qwen/qwen3.5-flash-02-23",
+                    "modelo_escalonamento": "openai/gpt-5.6-luna",
                     "usar_ia_juiz": bool(juiz_admin),
                     "classificar_emails_com_ia": bool(clf_admin),
                 })
                 if app_config.salvar_config(_cfg):
                     # aplica imediatamente na sessão atual
-                    st.session_state.cfg_model = modelo_admin
+                    st.session_state.cfg_model = "qwen/qwen3.5-flash-02-23"
                     st.session_state.cfg_usar_ia_juiz = bool(juiz_admin)
                     st.session_state.cfg_classificar_emails_com_ia = bool(clf_admin)
                     st.success("Configuração salva. Usuários finais já não precisam configurar nada.")
