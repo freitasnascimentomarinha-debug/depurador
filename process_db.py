@@ -855,27 +855,33 @@ def atualizar_participacao(
     if tipo_email == "pedido_orcamento" and data_envio:
         conn.execute(
             """UPDATE participacoes
-               SET data_pedido_enviado = COALESCE(data_pedido_enviado, ?)
+               SET data_pedido_enviado = CASE
+                   WHEN data_pedido_enviado IS NULL OR ? < data_pedido_enviado THEN ?
+                   ELSE data_pedido_enviado END
                WHERE processo_id = ? AND fornecedor_id = ?""",
-            (data_envio, processo_id, fornecedor_id),
+            (data_envio, data_envio, processo_id, fornecedor_id),
         )
     elif tipo_email == "orcamento_recebido":
         conn.execute(
             """UPDATE participacoes
                SET enviou_orcamento = 1,
                    data_primeira_resposta = COALESCE(data_primeira_resposta, ?),
-                   data_pedido_enviado = COALESCE(data_pedido_enviado, ?)
+                   data_pedido_enviado = CASE
+                       WHEN data_pedido_enviado IS NULL OR ? < data_pedido_enviado THEN ?
+                       ELSE data_pedido_enviado END
                WHERE processo_id = ? AND fornecedor_id = ?""",
-            (data_envio, data_pedido_inferida, processo_id, fornecedor_id),
+            (data_envio, data_pedido_inferida, data_pedido_inferida, processo_id, fornecedor_id),
         )
     elif tipo_email == "declinio":
         conn.execute(
             """UPDATE participacoes
                SET recusou = 1,
                    data_primeira_resposta = COALESCE(data_primeira_resposta, ?),
-                   data_pedido_enviado = COALESCE(data_pedido_enviado, ?)
+                   data_pedido_enviado = CASE
+                       WHEN data_pedido_enviado IS NULL OR ? < data_pedido_enviado THEN ?
+                       ELSE data_pedido_enviado END
                WHERE processo_id = ? AND fornecedor_id = ?""",
-            (data_envio, data_pedido_inferida, processo_id, fornecedor_id),
+            (data_envio, data_pedido_inferida, data_pedido_inferida, processo_id, fornecedor_id),
         )
     elif tipo_email == "confirmacao_leitura":
         conn.execute(
@@ -889,9 +895,11 @@ def atualizar_participacao(
             """UPDATE participacoes
                SET fez_pergunta = 1,
                    data_primeira_resposta = COALESCE(data_primeira_resposta, ?),
-                   data_pedido_enviado = COALESCE(data_pedido_enviado, ?)
+                   data_pedido_enviado = CASE
+                       WHEN data_pedido_enviado IS NULL OR ? < data_pedido_enviado THEN ?
+                       ELSE data_pedido_enviado END
                WHERE processo_id = ? AND fornecedor_id = ?""",
-            (data_envio, data_pedido_inferida, processo_id, fornecedor_id),
+            (data_envio, data_pedido_inferida, data_pedido_inferida, processo_id, fornecedor_id),
         )
     conn.commit()
 
@@ -997,7 +1005,10 @@ def obter_consumo_processo(conn: sqlite3.Connection, processo_id: int) -> dict:
 
 def get_resumo_processo(conn: sqlite3.Connection, processo_id: int) -> dict:
     """Retorna estatísticas consolidadas de um processo."""
-    emails = listar_emails_processo(conn, processo_id)
+    emails = [
+        e for e in listar_emails_processo(conn, processo_id)
+        if not _email_interno(e.get("remetente_email"))
+    ]
     participacoes = get_participacoes_processo(conn, processo_id)
 
     contagem = {}

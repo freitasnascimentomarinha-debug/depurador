@@ -125,6 +125,23 @@ def _heuristica(parsed: dict) -> Optional[str]:
     if any(w in corpo for w in decl_words):
         return "declinio"
 
+    # Dúvida do fornecedor: pergunta sobre itens, prazo ou condições.
+    # Usa assunto + corpo porque muitas respostas curtas deixam a pergunta
+    # apenas no assunto do e-mail.
+    texto_duvida = f"{assunto} {corpo}"
+    duvida_words = (
+        "gostaria de esclarecimento", "poderia esclarecer", "poderia informar",
+        "poderia confirmar", "qual a especificação", "qual a especificacao",
+        "o que é o item", "o que e o item", "pode detalhar", "poderia detalhar",
+        "prazo de entrega", "prazo para entrega", "qual o prazo", "em qual cidade",
+        "local de entrega", "pergunta sobre", "dúvida sobre", "duvida sobre",
+        "tenho uma dúvida", "tenho uma duvida", "gostaria de saber",
+        "favor esclarecer", "gentileza esclarecer", "poderiam esclarecer",
+        "como devemos", "qual seria", "será possível", "sera possivel",
+    )
+    if "?" in texto_duvida or any(w in texto_duvida for w in duvida_words):
+        return "duvida"
+
     # Orçamento recebido: resposta com conteúdo de proposta/preço
     orcamento_words = ("proposta de preços", "proposta de precos", "nossa proposta",
                        "segue proposta", "segue cotação", "segue cotacao",
@@ -133,14 +150,6 @@ def _heuristica(parsed: dict) -> Optional[str]:
                        "nossa cotação", "nossa cotacao")
     if any(w in corpo for w in orcamento_words):
         return "orcamento_recebido"
-
-    # Dúvida do fornecedor: pergunta sobre itens
-    duvida_words = ("gostaria de esclarecimento", "poderia esclarecer", "qual a especificação",
-                    "qual a especificacao", "o que é o item", "o que e o item",
-                    "pode detalhar", "poderia detalhar", "prazo de entrega",
-                    "em qual cidade", "local de entrega", "pergunta sobre")
-    if any(w in corpo for w in duvida_words):
-        return "duvida"
 
     return None
 

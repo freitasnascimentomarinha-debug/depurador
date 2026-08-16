@@ -1754,6 +1754,10 @@ if processar:
                 log_lines: list[str] = []
                 pipeline_state = {"fraction": 0.0, "stage": "Inicialização"}
 
+                def _formatar_tempo(segundos: float) -> str:
+                    total = max(0, int(segundos))
+                    return f"{total // 60:02d}:{total % 60:02d}"
+
                 def _log_style(msg: str) -> tuple[str, str]:
                     lower = msg.lower()
                     if any(k in lower for k in ("erro", "falha", "exceção", "exception")):
@@ -1778,11 +1782,12 @@ if processar:
                         pipeline_state["fraction"],
                         text=f"{pipeline_state['fraction'] * 100:05.1f}%  •  {stage}",
                     )
+                    tempo_formatado = _formatar_tempo(elapsed)
                     current_stage_placeholder.markdown(
                         f"<div style='padding:8px 12px;border-left:4px solid #55d6be;"
                         f"background:#102a2b;color:#d7fff5;border-radius:4px;'>"
                         f"<b>Etapa atual</b>&nbsp;&nbsp; {html.escape(stage)}"
-                        f"<span style='float:right;color:#9fb8b5;'>tempo decorrido: {elapsed:.1f}s</span></div>",
+                        f"<span style='float:right;color:#9fb8b5;'>tempo decorrido: {tempo_formatado}</span></div>",
                         unsafe_allow_html=True,
                     )
                     pipeline_metrics.markdown(
@@ -1790,7 +1795,7 @@ if processar:
                         f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
                         f"<b>{pipeline_state['fraction'] * 100:.1f}%</b> concluído</span>"
                         f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
-                        f"<b>{elapsed:.1f}s</b> decorridos</span>"
+                        f"<b>{tempo_formatado}</b> decorridos</span>"
                         f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
                         f"<b>{len(log_lines)}</b> eventos</span></div>",
                         unsafe_allow_html=True,
@@ -1802,7 +1807,9 @@ if processar:
                     color, label = _log_style(msg)
                     log_lines.append(f"[{stamp}] {msg}")
                     rendered = []
-                    for line in log_lines[-120:]:
+                    # O mais recente fica no topo, eliminando a necessidade de
+                    # rolar manualmente até o fim a cada novo evento.
+                    for line in reversed(log_lines[-120:]):
                         raw = line[11:] if len(line) > 11 else line
                         line_color, line_label = _log_style(raw)
                         rendered.append(
@@ -2001,10 +2008,19 @@ if processar:
                     template_hashes: set[str] = set()
                     template_anexo_bytes = None
                     template_anexo_nome = None
+                    datas_pedido_por_email: dict[str, str] = {}
                     for eml in eml_entries:
                         _parsed_pre = email_utils.parse_eml(eml["conteudo_bytes"], filename=eml["nome"])
                         parsed_emls.append(_parsed_pre)
                         _rem_pre = (_parsed_pre.get("remetente_email") or "").lower()
+                        if _email_interno(_rem_pre) and _parsed_pre.get("data_envio"):
+                            for _dest_pre in _parsed_pre.get("destinatarios", []):
+                                _dest_email_pre = (_dest_pre.get("email") or "").strip().lower()
+                                if _dest_email_pre and not _email_interno(_dest_email_pre):
+                                    _data_pre = _parsed_pre["data_envio"]
+                                    _data_atual = datas_pedido_por_email.get(_dest_email_pre)
+                                    if not _data_atual or _data_pre < _data_atual:
+                                        datas_pedido_por_email[_dest_email_pre] = _data_pre
                         if _RE_INSTITUCIONAL.search(_rem_pre) or _rem_pre in _REMETENTES_INSTITUCIONAIS_PRE:
                             for _anx_pre in _parsed_pre.get("anexos", []):
                                 try:
@@ -2228,6 +2244,10 @@ if processar:
                             )
                             if data_pedido_hist:
                                 n_pedidos_inferidos += 1
+                            data_pedido_hist = (
+                                data_pedido_hist
+                                or datas_pedido_por_email.get((rem_email or "").strip().lower())
+                            )
                         if rem_email and not _email_interno(rem_email):
                             if rem_cnpj:
                                 n_cnpjs_identificados += 1
@@ -2733,7 +2753,10 @@ with aba_emails:
         st.info("Selecione um processo na sidebar para visualizar esta aba.")
 
     if processo_sel:
-        emails = process_db.listar_emails_processo(conn_proc, processo_sel["id"])
+        emails = [
+            e for e in process_db.listar_emails_processo(conn_proc, processo_sel["id"])
+            if not _email_interno(e.get("remetente_email"))
+        ]
         st.caption(f"Total de e-mails: {len(emails)}")
         if not emails:
             st.info("Sem e-mails neste processo.")
