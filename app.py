@@ -261,6 +261,11 @@ class _BytesUploadLike(io.BytesIO):
 
 def _ler_master_items(master_file) -> list[dict]:
     nome = (master_file.name or "").lower()
+    if not nome.endswith((".csv", ".xls", ".xlsx")):
+        # Formato que este parser não sabe interpretar (ex.: PDF/DOCX
+        # detectado por engano como anexo-modelo) — nunca tenta abrir como
+        # planilha às cegas, apenas sinaliza "sem lista de referência".
+        return []
     if nome.endswith(".csv"):
         conteudo = master_file.getvalue().decode("utf-8", errors="ignore")
         reader = csv.DictReader(conteudo.splitlines())
@@ -1923,7 +1928,11 @@ if processar:
                             for _anx_pre in _parsed_pre.get("anexos", []):
                                 try:
                                     template_hashes.add(file_utils.hash_bytes(_anx_pre["conteudo_bytes"]))
-                                    if template_anexo_bytes is None and _is_budget_file((_anx_pre.get("nome") or "").lower()):
+                                    # _ler_master_items só sabe interpretar xlsx/xls/csv — um
+                                    # anexo-modelo em PDF/DOCX aqui faria o parser de planilha
+                                    # tentar ler um arquivo que não é planilha nenhuma.
+                                    _nome_anx_pre = (_anx_pre.get("nome") or "").lower()
+                                    if template_anexo_bytes is None and _nome_anx_pre.endswith((".xlsx", ".xls", ".csv")):
                                         template_anexo_bytes = _anx_pre["conteudo_bytes"]
                                         template_anexo_nome = _anx_pre.get("nome") or "template.xlsx"
                                 except Exception:
@@ -2372,6 +2381,8 @@ if processar:
                         n_budget_novos += 1
                     except Exception as exc:
                         falhas.append(f"{f['name']}: {exc}")
+                        add_log(f"ERRO ao processar {f['name']}: {exc}")
+                        add_log(traceback.format_exc())
 
                     progress.progress((i + 1) / max(1, len(budget_candidates)))
 

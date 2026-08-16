@@ -505,11 +505,15 @@ EXTRACTION_JSON_SCHEMA = {
 
 def _formatar_lista_referencia(lista_referencia: list[dict] | None) -> str:
     """Formata a lista de itens da solicitação de orçamento/edital (numero_item,
-    codigo, descricao) como bloco de contexto para a IA usar no casamento."""
+    codigo, descricao) como bloco de contexto para a IA usar no casamento.
+    Nunca deixa um item malformado (não-dicionário) derrubar a extração
+    inteira: ignora silenciosamente entradas que não sejam dict."""
     if not lista_referencia:
         return ""
     linhas = ["LISTA DE REFERÊNCIA (itens oficiais da solicitação de orçamento/edital):"]
     for it in lista_referencia:
+        if not isinstance(it, dict):
+            continue
         numero = it.get("numero_item")
         codigo = it.get("codigo")
         descricao = it.get("descricao") or ""
@@ -520,6 +524,8 @@ def _formatar_lista_referencia(lista_referencia: list[dict] | None) -> str:
             partes.append(f"código {codigo}")
         partes.append(descricao)
         linhas.append("- " + " | ".join(str(p) for p in partes if p))
+    if len(linhas) <= 1:
+        return ""
     return "\n".join(linhas)
 
 
@@ -537,7 +543,11 @@ def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
     texto_base = pre_filtrar_texto(text) if pre_filtrar else text
     texto_truncado = len(texto_base) > max_chars
     user_content = texto_base[:max_chars]
-    bloco_referencia = _formatar_lista_referencia(lista_referencia)
+    try:
+        bloco_referencia = _formatar_lista_referencia(lista_referencia)
+    except Exception:
+        # lista de referência malformada nunca deve impedir a extração em si
+        bloco_referencia = ""
     if bloco_referencia:
         user_content = f"{bloco_referencia}\n\n{user_content}"
     if filename_hint:
@@ -679,7 +689,10 @@ def call_openrouter_vision_extract(imagens: list[bytes], api_key: str, model: st
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    bloco_referencia = _formatar_lista_referencia(lista_referencia)
+    try:
+        bloco_referencia = _formatar_lista_referencia(lista_referencia)
+    except Exception:
+        bloco_referencia = ""
     conteudo = [{
         "type": "text",
         "text": (

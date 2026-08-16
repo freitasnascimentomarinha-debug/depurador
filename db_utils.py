@@ -122,6 +122,9 @@ def save_extraction(conn: sqlite3.Connection, file_id: str, nome: str, empresa: 
         ),
     )
     for item in itens:
+        if not isinstance(item, dict):
+            # nunca deixa um item malformado derrubar a gravação dos demais
+            continue
         conn.execute(
             "INSERT INTO itens (file_id, numero_item, descricao, unidade, quantidade, "
             "preco_unitario, preco_total, fonte_extracao, origem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
