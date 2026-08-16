@@ -222,11 +222,13 @@ _MASTER_NUM_ALIASES = {
 _MASTER_DESC_ALIASES = {
     "descricao", "nomenclatura", "nome", "material", "objeto", "especificacao", "produto"
 }
-# Código único do material (PI/NSN/Part Number) — critério mais forte de casamento
+# Código único do material (PI/NSN/Part Number) — critério mais forte de casamento.
+# Nunca incluir "referencia"/"ref": é a referência do FABRICANTE, difere entre
+# fornecedores para o mesmo item e destruiria o casamento por código.
 _MASTER_COD_ALIASES = {
     "pi", "nsn", "part number", "partnumber", "pn", "codigo", "cod",
     "codigo do item", "codigo item", "cod item", "n estoque", "numero de estoque",
-    "num estoque", "referencia", "ref"
+    "num estoque"
 }
 
 
@@ -299,21 +301,56 @@ def _ler_master_items(master_file) -> list[dict]:
         return out
 
     wb = openpyxl.load_workbook(master_file, data_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    idx_num = _pick_master_column(headers, _MASTER_NUM_ALIASES)
-    idx_desc = _pick_master_column(headers, _MASTER_DESC_ALIASES)
-    idx_cod = _pick_master_column(headers, _MASTER_COD_ALIASES)
-    if idx_num is None and idx_desc is None:
+
+    # Bug: wb.active pega a aba que estava selecionada quando o arquivo foi
+    # salvo, não necessariamente a aba com a lista de itens (ex.: pode ser uma
+    # aba de capa/instruções). Escaneia todas as abas e escolhe a que tem o
+    # melhor mapeamento de colunas, com o cabeçalho procurado nas primeiras
+    # linhas em vez de assumido fixo na linha 0.
+    melhor = None
+    melhor_pontuacao = -1
+    for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            continue
+
+        header_idx = None
+        idx_num = idx_desc = idx_cod = None
+        for i in range(min(len(rows), 40)):
+            headers_cand = [str(h).strip() if h is not None else "" for h in rows[i]]
+            cand_num = _pick_master_column(headers_cand, _MASTER_NUM_ALIASES)
+            cand_desc = _pick_master_column(headers_cand, _MASTER_DESC_ALIASES)
+            if cand_num is not None or cand_desc is not None:
+                header_idx = i
+                idx_num = cand_num
+                idx_desc = cand_desc
+                idx_cod = _pick_master_column(headers_cand, _MASTER_COD_ALIASES)
+                break
+        if header_idx is None:
+            continue
+
+        pontuacao = (
+            (2 if idx_num is not None else 0)
+            + (2 if idx_desc is not None else 0)
+            + (1 if idx_cod is not None else 0)
+            + min(len(rows) / 10000.0, 1.0)  # desempate: aba com mais linhas
+        )
+        if pontuacao > melhor_pontuacao:
+            melhor_pontuacao = pontuacao
+            melhor = (rows, header_idx, idx_num, idx_desc, idx_cod)
+
+    if melhor is None:
         return []
 
+    rows, header_idx, idx_num, idx_desc, idx_cod = melhor
     out = []
-    for row in rows[1:]:
+    ultimo_numero = None
+    for row in rows[header_idx + 1:]:
+        bruto_numero = row[idx_num] if idx_num is not None and idx_num < len(row) else None
+        if bruto_numero not in (None, ""):
+            ultimo_numero = bruto_numero
         out.append({
-            "numero_item": row[idx_num] if idx_num is not None and idx_num < len(row) else None,
+            "numero_item": ultimo_numero,
             "codigo": row[idx_cod] if idx_cod is not None and idx_cod < len(row) else None,
             "descricao": row[idx_desc] if idx_desc is not None and idx_desc < len(row) else None,
         })

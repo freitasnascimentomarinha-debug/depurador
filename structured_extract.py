@@ -19,21 +19,27 @@ _COL_SYNONYMS = {
         "item", "n item", "item do edital", "num", "numero", "n"
     ],
     # Código único do MATERIAL (PI/NSN/Part Number) — critério mais forte de
-    # casamento entre fornecedores; não confundir com numero_item (posição no edital)
+    # casamento entre fornecedores; não confundir com numero_item (posição no
+    # edital) nem com "referencia", que é do FABRICANTE e difere entre
+    # fornecedores para o mesmo item (ver campo "referencia" abaixo).
     "codigo": [
         "pi", "nsn", "part number", "partnumber", "pn", "p n",
         "cod", "codigo", "cod item", "codigo do item", "codigo item",
         "n estoque", "no estoque", "numero de estoque", "num estoque",
-        "referencia", "ref"
     ],
+    # Referência cadastrada do fabricante/fornecedor — nunca usar como critério
+    # de casamento entre fornecedores diferentes. Mapeada aqui só para ocupar
+    # a coluna e não colidir com "codigo".
+    "referencia": ["referencia cadastrada", "referencia", "ref"],
     "descricao": [
         "descricao", "nomenclatura", "nome", "especificacao", "produto", "objeto", "material"
     ],
-    "unidade": ["uf", "und", "unidade", "emb", "cx", "kg", "lt"],
-    "quantidade": ["qtd", "quantidade", "quant", "qtde"],
-    # Priorizar detecção de valor total para evitar confusão com valor unitário
-    "preco_total": ["valor total", "vl total", "total", "valor"] ,
-    "preco_unitario": ["valor unit", "vl unit", "unitario", "preco unit"],
+    "unidade": ["uf", "u f", "und", "unidade", "emb"],
+    "quantidade": ["qtd", "qtde", "quantidade", "quant", "qt"],
+    # Termos de 2+ palavras primeiro (maior especificidade): evita que "valor"
+    # sozinho capture a coluna de unitário antes da de total, ou vice-versa.
+    "preco_unitario": ["valor unitario", "preco unitario", "valor unit", "vl unit", "preco unit", "unitario"],
+    "preco_total": ["valor total", "preco total", "vl total", "total"],
 }
 
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -122,6 +128,10 @@ def _detectar_linha_cabecalho(rows: list[list[Any]]) -> int | None:
 
 
 def _mapear_colunas(headers: list[str]) -> dict[str, int]:
+    """Mapeia cada campo a uma coluna, priorizando o termo mais específico
+    (mais longo) e proibindo que dois campos disputem a mesma coluna — evita
+    que preco_unitario e preco_total (ou codigo e referencia) colapsem na
+    mesma coluna quando um termo curto e ambíguo bate nos dois cabeçalhos."""
     def _match_term(header_norm: str, term: str) -> bool:
         term = _norm(term)
         if not term:
@@ -130,19 +140,36 @@ def _mapear_colunas(headers: list[str]) -> dict[str, int]:
         if " " in term:
             return term in header_norm
 
-        tokens = set(re.findall(r"\w+", header_norm))
-        return term in tokens
+        tokens_lista = re.findall(r"\w+", header_norm)
+        if term in tokens_lista:
+            return True
+        # Siglas pontuadas (ex.: "U.F.", "N.º") tokenizam em letras soltas
+        # ("u", "f"); concatena tokens curtos na ordem em que aparecem antes
+        # de desistir do match — sem isso, "uf" nunca bate com "U.F.".
+        if tokens_lista and all(len(t) <= 2 for t in tokens_lista):
+            if "".join(tokens_lista) == term:
+                return True
+        return False
 
-    mapeamento = {}
+    candidatos = []
     for idx, cab in enumerate(headers):
         norm = _norm(cab)
         if not norm:
             continue
         for campo, termos in _COL_SYNONYMS.items():
-            if campo in mapeamento:
-                continue
-            if any(_match_term(norm, t) for t in termos):
-                mapeamento[campo] = idx
+            for termo in termos:
+                if _match_term(norm, termo):
+                    # termo mais longo = mais especifico = maior prioridade
+                    candidatos.append((len(_norm(termo)), campo, idx))
+                    break
+
+    mapeamento: dict[str, int] = {}
+    ocupadas: set[int] = set()
+    for _, campo, idx in sorted(candidatos, reverse=True):
+        if campo in mapeamento or idx in ocupadas:
+            continue
+        mapeamento[campo] = idx
+        ocupadas.add(idx)
     return mapeamento
 
 
@@ -288,6 +315,7 @@ def extrair_xlsx_estruturado(path: str) -> list[dict] | None:
         if len(colunas) < 2 or "descricao" not in colunas:
             continue
 
+        ultimo_numero = None
         for ridx in range(header_idx + 1, len(rows)):
             row = rows[ridx]
             descricao = row[colunas["descricao"]] if "descricao" in colunas and colunas["descricao"] < len(row) else None
@@ -295,12 +323,19 @@ def extrair_xlsx_estruturado(path: str) -> list[dict] | None:
             if not descricao:
                 continue
 
+            # Item com mais de uma referência ocupa várias linhas com a coluna
+            # ITEM vazia nas seguintes; propaga o último número lido em vez de
+            # gerar entradas órfãs com numero_item=None.
+            bruto_numero = (
+                row[colunas["numero_item"]]
+                if "numero_item" in colunas and colunas["numero_item"] < len(row)
+                else None
+            )
+            if bruto_numero not in (None, ""):
+                ultimo_numero = str(bruto_numero).strip()
+
             item = {
-                "numero_item": (
-                    str(row[colunas["numero_item"]]).strip()
-                    if "numero_item" in colunas and colunas["numero_item"] < len(row) and row[colunas["numero_item"]] is not None
-                    else None
-                ),
+                "numero_item": ultimo_numero,
                 "codigo": (
                     str(row[colunas["codigo"]]).strip()
                     if "codigo" in colunas and colunas["codigo"] < len(row) and row[colunas["codigo"]] is not None
@@ -346,6 +381,7 @@ def extrair_docx_estruturado(path: str) -> list[dict] | None:
         if len(colunas) < 2 or "descricao" not in colunas:
             continue
 
+        ultimo_numero = None
         for l_idx in range(header_idx + 1, len(linhas)):
             row = linhas[l_idx]
             descricao = row[colunas["descricao"]] if "descricao" in colunas and colunas["descricao"] < len(row) else None
@@ -353,12 +389,16 @@ def extrair_docx_estruturado(path: str) -> list[dict] | None:
             if not descricao:
                 continue
 
+            bruto_numero = (
+                row[colunas["numero_item"]]
+                if "numero_item" in colunas and colunas["numero_item"] < len(row)
+                else None
+            )
+            if bruto_numero and str(bruto_numero).strip():
+                ultimo_numero = str(bruto_numero).strip()
+
             item = {
-                "numero_item": (
-                    str(row[colunas["numero_item"]]).strip()
-                    if "numero_item" in colunas and colunas["numero_item"] < len(row) and str(row[colunas["numero_item"]]).strip()
-                    else None
-                ),
+                "numero_item": ultimo_numero,
                 "codigo": (
                     str(row[colunas["codigo"]]).strip()
                     if "codigo" in colunas and colunas["codigo"] < len(row) and str(row[colunas["codigo"]]).strip()
@@ -420,6 +460,7 @@ def tentar_extracao_estrutural_pdf(path: str) -> dict:
                 if "descricao" in colunas and "quantidade" in colunas and ("preco_unitario" in colunas or "preco_total" in colunas):
                     encontrou_colunas = True
 
+                ultimo_numero = None
                 for ridx in range(header_idx + 1, len(tabela)):
                     row = tabela[ridx] or []
                     descricao = row[colunas["descricao"]] if "descricao" in colunas and colunas["descricao"] < len(row) else None
@@ -427,12 +468,16 @@ def tentar_extracao_estrutural_pdf(path: str) -> dict:
                     if not descricao:
                         continue
 
+                    bruto_numero = (
+                        row[colunas["numero_item"]]
+                        if "numero_item" in colunas and colunas["numero_item"] < len(row)
+                        else None
+                    )
+                    if bruto_numero and str(bruto_numero).strip():
+                        ultimo_numero = str(bruto_numero).strip()
+
                     item = {
-                        "numero_item": (
-                            str(row[colunas["numero_item"]]).strip()
-                            if "numero_item" in colunas and colunas["numero_item"] < len(row) and str(row[colunas["numero_item"]]).strip()
-                            else None
-                        ),
+                        "numero_item": ultimo_numero,
                         "codigo": (
                             str(row[colunas["codigo"]]).strip()
                             if "codigo" in colunas and colunas["codigo"] < len(row) and str(row[colunas["codigo"]]).strip()

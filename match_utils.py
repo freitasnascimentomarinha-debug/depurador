@@ -408,15 +408,33 @@ def build_comparison_table(all_extractions, master_items=None, fuzzy_threshold: 
                     preco = float(preco_total) / float(quantidade)
                 except Exception:
                     preco = None
-            # Caso 2 (conservador): veio preco_unitario mas é idêntico ao preco_total -> provavelmente foi o total
+            # Caso 2: vieram os dois valores e a quantidade -> valida aritmeticamente
+            # antes de mexer. Nunca divide as cegas: só corrige quando o par invertido
+            # de fato fecha a conta (colunas trocadas na extração); senão preserva o
+            # valor impresso e apenas sinaliza para revisão manual.
             elif preco is not None and preco_total is not None and quantidade:
                 try:
                     p_unit = float(preco)
                     p_total = float(preco_total)
-                    # se o preco informado é (quase) igual ao preco_total, corrige para unitario
-                    if abs(p_unit - p_total) <= 1e-6:
-                        preco = p_total / float(quantidade)
-                except Exception:
+                    qtd = float(quantidade)
+                    tolerancia = max(0.05, 0.005 * abs(p_total))
+                    if abs(p_unit * qtd - p_total) > tolerancia:
+                        tolerancia_inv = max(0.05, 0.005 * abs(p_unit))
+                        if abs(p_total * qtd - p_unit) <= tolerancia_inv:
+                            preco = p_total  # unitario e total vieram trocados
+                        else:
+                            review.append({
+                                "tipo": "unitário x quantidade não fecha com o total",
+                                "numero_item": item.get("numero_item"),
+                                "descricao_nova": (
+                                    f"{item.get('descricao', '')} "
+                                    f"[{empresa}: unit R$ {p_unit:.2f} x qtd {qtd:g} "
+                                    f"≠ total R$ {p_total:.2f}]"
+                                ),
+                                "casou_com": "",
+                                "score": 0,
+                            })
+                except (TypeError, ValueError):
                     pass
             tem_preco = preco is not None
             quantidade = item.get("quantidade")
