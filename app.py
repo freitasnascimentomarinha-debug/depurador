@@ -138,11 +138,14 @@ def _load_openrouter_api_key() -> str:
             return str(cfg["openrouter_api_key"]).strip()
     except Exception:
         pass
-    # 2) Secrets do Streamlit
-    for secret_name in ("OPENROUTER_API_KEY", "openrouter_api_key"):
-        api_key = st.secrets.get(secret_name)
-        if api_key:
-            return str(api_key).strip()
+    # 2) Secrets do Streamlit (arquivo secrets.toml pode nem existir localmente)
+    try:
+        for secret_name in ("OPENROUTER_API_KEY", "openrouter_api_key"):
+            api_key = st.secrets.get(secret_name)
+            if api_key:
+                return str(api_key).strip()
+    except Exception:
+        pass
     # 3) Variável de ambiente
     return os.getenv("OPENROUTER_API_KEY", "").strip()
 
@@ -1388,25 +1391,33 @@ if "cfg_consensus_threshold" not in st.session_state:
     st.session_state.cfg_consensus_threshold = 80
 if "master_file_upload" not in st.session_state:
     st.session_state.master_file_upload = None
-if not st.session_state.get("cfg_perfil_recomendado_v2"):
-    st.session_state.update({
-        "cfg_usar_ia_juiz": True,
-        "cfg_classificar_emails_com_ia": True,
-        "cfg_salvar_binario_anexos": True,
-        "cfg_processar_orcamentos_de_anexos": True,
-        "cfg_limiar_confianca_alta": 85,
-        "cfg_limiar_confianca_baixa": 40,
-        "cfg_fuzzy_threshold": 85,
-        "cfg_pre_filtrar": True,
-        "cfg_sanity_threshold": 50,
-        "cfg_bloquear_numero_incoerente": True,
-        "cfg_usar_uf_casamento": True,
-        "cfg_usar_qtd_casamento": True,
-        "cfg_gerar_master_auto": True,
-        "cfg_min_agree": 3,
-        "cfg_consensus_threshold": 80,
-        "cfg_perfil_recomendado_v2": True,
-    })
+
+_PERFIL_RECOMENDADO = {
+    "cfg_usar_ia_juiz": True,
+    "cfg_classificar_emails_com_ia": True,
+    "cfg_salvar_binario_anexos": True,
+    "cfg_processar_orcamentos_de_anexos": True,
+    "cfg_limiar_confianca_alta": 85,
+    "cfg_limiar_confianca_baixa": 40,
+    "cfg_fuzzy_threshold": 85,
+    "cfg_pre_filtrar": True,
+    "cfg_sanity_threshold": 50,
+    "cfg_bloquear_numero_incoerente": True,
+    "cfg_usar_uf_casamento": True,
+    "cfg_usar_qtd_casamento": True,
+    "cfg_gerar_master_auto": True,
+    "cfg_min_agree": 3,
+    "cfg_consensus_threshold": 80,
+}
+
+
+def _aplicar_perfil_recomendado() -> None:
+    st.session_state.update(_PERFIL_RECOMENDADO)
+    st.session_state["cfg_perfil_recomendado_v3"] = True
+
+
+if not st.session_state.get("cfg_perfil_recomendado_v3"):
+    _aplicar_perfil_recomendado()
 
 with st.sidebar:
     pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
@@ -1436,6 +1447,13 @@ with st.sidebar:
 
 if pagina_sidebar == "Configurações":
     st.subheader("Configurações")
+    col_titulo, col_restaurar = st.columns([3, 1])
+    with col_restaurar:
+        if st.button("🔄 Restaurar valores recomendados", use_container_width=True):
+            _aplicar_perfil_recomendado()
+            st.success("Configuração restaurada para os valores de melhor desempenho.")
+            st.rerun()
+
     aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_mapa_cfg, aba_administracao = st.tabs([
         "Processo",
         "IA e classificação",
@@ -1514,6 +1532,63 @@ if pagina_sidebar == "Configurações":
                 _cfg["openrouter_api_key"] = (nova_chave or "").strip()
                 app_config.salvar_config(_cfg)
                 st.success("Configuração salva.")
+
+        st.divider()
+        st.write("Cache de orçamentos e manutenção do processo selecionado")
+        st.session_state.budget_db_path = st.text_input(
+            "Banco/cache de orçamentos",
+            value=st.session_state.budget_db_path,
+            key="cfg_budget_db_path",
+        )
+        st.session_state.forcar_reprocessamento = st.checkbox(
+            "Reprocessar tudo (ignorar cache)",
+            value=bool(st.session_state.forcar_reprocessamento),
+            key="cfg_forcar_reprocessamento",
+        )
+        conn_preview = db_utils.get_connection(st.session_state.budget_db_path)
+        removidos_antigos = db_utils.purge_old_versions(conn_preview)
+        n_cached = db_utils.count_files(conn_preview)
+        if removidos_antigos:
+            st.caption(f"{removidos_antigos} entrada(s) antigas removidas do cache de orçamentos.")
+        st.caption(f"{n_cached} arquivo(s) já salvos no cache de orçamentos.")
+
+        st.divider()
+        st.write("Exclusão do processo selecionado")
+        conn_proc_admin = process_db.get_connection(st.session_state.cfg_process_db_path)
+        processo_ativo = None
+        if st.session_state.selected_processo_view_id is not None:
+            processo_ativo = next(
+                (p for p in process_db.listar_processos(conn_proc_admin)
+                 if p["id"] == st.session_state.selected_processo_view_id),
+                None,
+            )
+        if processo_ativo is None:
+            st.info("Nenhum processo selecionado.")
+        else:
+            st.warning(
+                f"Processo selecionado: {processo_ativo['numero']} - "
+                f"{processo_ativo.get('titulo') or 'sem titulo'}"
+            )
+            st.caption(
+                "A exclusão remove apenas este processo e seus dados relacionados, "
+                "preservando todos os demais processos."
+            )
+            if st.button("Solicitar exclusão do processo selecionado"):
+                st.session_state.confirmar_deletar_processo = True
+            if st.session_state.confirmar_deletar_processo:
+                col_yes, col_no = st.columns(2)
+                with col_yes:
+                    if st.button("Sim, excluir processo"):
+                        process_db.deletar_processo(conn_proc_admin, processo_ativo["id"])
+                        st.session_state.confirmar_deletar_processo = False
+                        st.session_state.selected_processo_view_id = None
+                        st.session_state.force_modo_novo = True
+                        st.success("Processo excluído com sucesso.")
+                        st.rerun()
+                with col_no:
+                    if st.button("Não, cancelar exclusão"):
+                        st.session_state.confirmar_deletar_processo = False
+                        st.info("Exclusão cancelada.")
     st.stop()
 
 
@@ -2891,237 +2966,4 @@ with aba_mapa:
                     )
                 except Exception as exc:
                     st.error(f"Falha ao salvar decisões: {exc}")
-
-
-if pagina_sidebar == "Configurações":
-    conteudo_aplicacao.empty()
-    st.subheader("Configurações")
-    aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_administracao = st.tabs([
-        "Processo",
-        "IA e classificação",
-        "Regras de extração/comparação",
-        "Administração",
-    ])
-
-    with aba_processo_cfg:
-        st.session_state.cfg_process_db_path = st.text_input(
-            "Banco de processos/emails",
-            value=st.session_state.cfg_process_db_path,
-            key="process_db_path_input",
-        )
-        processos_cfg = process_db.listar_processos(
-            process_db.get_connection(st.session_state.cfg_process_db_path)
-        )
-        opcoes_modo = ["Novo processo"]
-        if processos_cfg:
-            opcoes_modo.append("Processo existente")
-        modo_atual = st.session_state.get("modo_processo", "Novo processo")
-        indice_modo = opcoes_modo.index(modo_atual) if modo_atual in opcoes_modo else 0
-        modo_cfg = st.radio("Vincular ingestão em", opcoes_modo, index=indice_modo)
-        st.session_state.modo_processo = modo_cfg
-
-        if modo_cfg == "Processo existente":
-            opcoes_processos = [f"{p['numero']} - {p.get('titulo') or 'sem titulo'}" for p in processos_cfg]
-            indice_processo = st.selectbox("Selecionar", range(len(opcoes_processos)), format_func=lambda i: opcoes_processos[i])
-            st.session_state.processo_existente_id = processos_cfg[indice_processo]["id"]
-            st.session_state.selected_processo_view_id = st.session_state.processo_existente_id
-        else:
-            st.session_state.processo_existente_id = None
-            st.session_state.processo_numero_novo = st.text_input(
-                "Numero do processo (opcional)", value=st.session_state.get("processo_numero_novo", "")
-            )
-            st.session_state.processo_titulo_novo = st.text_input(
-                "Titulo/descricao do processo", value=st.session_state.get("processo_titulo_novo", "")
-            )
-        st.session_state.auto_detectar_processo = st.checkbox(
-            "Auto detectar numero do processo pelo assunto dos e-mails",
-            value=bool(st.session_state.get("auto_detectar_processo", True)),
-            help="Quando houver .eml, tenta identificar o processo automaticamente.",
-        )
-
-    with aba_ia_cfg:
-        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
-        st.caption("Modelo forte: openai/gpt-5.6-luna")
-        if not api_key:
-            st.warning("Chave OpenRouter não encontrada em secrets ou na administração.")
-        st.checkbox(
-            "IA juiz: decidir casamentos na zona cinzenta (score 60-84)",
-            key="cfg_usar_ia_juiz",
-        )
-        st.checkbox(
-            "Classificar e-mails com IA quando heurística não for suficiente",
-            key="cfg_classificar_emails_com_ia",
-        )
-        st.checkbox("Salvar anexos de e-mail no banco (download posterior)", key="cfg_salvar_binario_anexos")
-        st.checkbox(
-            "Processar anexos de e-mail como orçamento quando suportados",
-            key="cfg_processar_orcamentos_de_anexos",
-        )
-
-    with aba_regras_cfg:
-        try:
-            _extrair_runtime_fn, _ocr_runtime_fn = _get_extract_runtime()
-            ocr_ok, ocr_err = _ocr_runtime_fn()
-        except Exception as exc:
-            ocr_ok, ocr_err = False, str(exc)
-        if not ocr_ok:
-            st.error(f"OCR indisponível neste ambiente: {ocr_err}")
-        st.slider("Limiar de confiança alta (PDF estrutural)", 60, 100, key="cfg_limiar_confianca_alta")
-        st.slider("Limiar de confiança baixa (PDF estrutural)", 0, 60, key="cfg_limiar_confianca_baixa")
-        st.slider("Sensibilidade do casamento por descrição", 70, 100, key="cfg_fuzzy_threshold")
-        st.checkbox("Pré-filtrar texto antes de enviar à IA", key="cfg_pre_filtrar")
-        st.slider("Alerta número igual x descrição divergente", 0, 80, key="cfg_sanity_threshold")
-        st.checkbox("Bloquear casamento automático quando número bate e descrição diverge", key="cfg_bloquear_numero_incoerente")
-        st.checkbox("Usar UF na identificação dos itens", key="cfg_usar_uf_casamento")
-        st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
-
-    # ------------------------------------------------------------------
-    # 🔐 Administração: chave OpenRouter e modelos (protegido por senha)
-    # ------------------------------------------------------------------
-    with aba_administracao:
-        _cfg = app_config.carregar_config()
-        if not app_config.tem_senha(_cfg):
-            st.info(
-                "Primeiro acesso: defina a senha de administrador. Depois disso, "
-                "só quem tiver a senha altera chave e modelos — os demais usuários "
-                "apenas fazem upload dos arquivos."
-            )
-            with st.form("form_admin_criar_senha"):
-                s1 = st.text_input("Nova senha de administrador", type="password")
-                s2 = st.text_input("Confirme a senha", type="password")
-                criar = st.form_submit_button("Definir senha")
-            if criar:
-                if not s1 or len(s1) < 6:
-                    st.error("Use uma senha com pelo menos 6 caracteres.")
-                elif s1 != s2:
-                    st.error("As senhas não conferem.")
-                else:
-                    _cfg = app_config.definir_senha(_cfg, s1)
-                    if app_config.salvar_config(_cfg):
-                        st.success("Senha definida. Recarregando…")
-                        st.rerun()
-                    else:
-                        st.error("Não foi possível gravar config_app.json.")
-        elif not st.session_state.get("admin_unlocked"):
-            with st.form("form_admin_login"):
-                senha_login = st.text_input("Senha de administrador", type="password")
-                entrar = st.form_submit_button("Desbloquear")
-            if entrar:
-                if app_config.verificar_senha(_cfg, senha_login):
-                    st.session_state.admin_unlocked = True
-                    st.rerun()
-                else:
-                    st.error("Senha incorreta.")
-        else:
-            st.success("Área administrativa desbloqueada.")
-            with st.form("form_admin_config"):
-                chave_atual = _cfg.get("openrouter_api_key") or ""
-                nova_chave = st.text_input(
-                    "Chave da API OpenRouter",
-                    value=chave_atual,
-                    type="password",
-                    help="Salva localmente em config_app.json (fora do git). "
-                         "Usuários finais nunca veem este campo.",
-                )
-                st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
-                st.caption("Modelo forte: openai/gpt-5.6-luna")
-                juiz_admin = st.checkbox("IA juiz habilitado por padrão", value=bool(_cfg.get("usar_ia_juiz", True)))
-                clf_admin = st.checkbox("Classificação de e-mails com IA por padrão", value=bool(_cfg.get("classificar_emails_com_ia", True)))
-                salvar_admin = st.form_submit_button("Salvar configuração")
-            if salvar_admin:
-                _cfg.update({
-                    "openrouter_api_key": (nova_chave or "").strip(),
-                    "modelo": "qwen/qwen3.5-flash-02-23",
-                    "modelo_escalonamento": "openai/gpt-5.6-luna",
-                    "usar_ia_juiz": bool(juiz_admin),
-                    "classificar_emails_com_ia": bool(clf_admin),
-                })
-                if app_config.salvar_config(_cfg):
-                    # aplica imediatamente na sessão atual
-                    st.session_state.cfg_model = "qwen/qwen3.5-flash-02-23"
-                    st.session_state.cfg_usar_ia_juiz = bool(juiz_admin)
-                    st.session_state.cfg_classificar_emails_com_ia = bool(clf_admin)
-                    st.success("Configuração salva. Usuários finais já não precisam configurar nada.")
-                    st.rerun()
-                else:
-                    st.error("Não foi possível gravar config_app.json.")
-
-            col_lock, col_senha = st.columns(2)
-            with col_lock:
-                if st.button("Bloquear área administrativa"):
-                    st.session_state.admin_unlocked = False
-                    st.rerun()
-            with col_senha:
-                with st.popover("Trocar senha"):
-                    with st.form("form_admin_trocar_senha"):
-                        ns1 = st.text_input("Nova senha", type="password", key="adm_ns1")
-                        ns2 = st.text_input("Confirmar nova senha", type="password", key="adm_ns2")
-                        trocar = st.form_submit_button("Trocar")
-                    if trocar:
-                        if not ns1 or len(ns1) < 6 or ns1 != ns2:
-                            st.error("Senha inválida ou não confere (mínimo 6 caracteres).")
-                        else:
-                            _cfg = app_config.definir_senha(_cfg, ns1)
-                            app_config.salvar_config(_cfg)
-                            st.success("Senha alterada.")
-
-    st.write("Cache de orçamentos e manutenção do processo selecionado")
-
-    st.session_state.budget_db_path = st.text_input(
-        "Banco/cache de orçamentos",
-        value=st.session_state.budget_db_path,
-        key="cfg_budget_db_path",
-    )
-    st.session_state.forcar_reprocessamento = st.checkbox(
-        "Reprocessar tudo (ignorar cache)",
-        value=bool(st.session_state.forcar_reprocessamento),
-        key="cfg_forcar_reprocessamento",
-    )
-
-    conn_preview = db_utils.get_connection(st.session_state.budget_db_path)
-    removidos_antigos = db_utils.purge_old_versions(conn_preview)
-    n_cached = db_utils.count_files(conn_preview)
-    if removidos_antigos:
-        st.caption(f"{removidos_antigos} entrada(s) antigas removidas do cache de orçamentos.")
-    st.caption(f"{n_cached} arquivo(s) já salvos no cache de orçamentos.")
-
-    st.divider()
-    st.write("Exclusão do processo selecionado")
-
-    processo_ativo = None
-    if st.session_state.selected_processo_view_id is not None:
-        processo_ativo = next(
-            (p for p in process_db.listar_processos(conn_proc)
-             if p["id"] == st.session_state.selected_processo_view_id),
-            None,
-        )
-
-    if processo_ativo is None:
-        st.info("Nenhum processo selecionado.")
-    else:
-        st.warning(
-            f"Processo selecionado: {processo_ativo['numero']} - "
-            f"{processo_ativo.get('titulo') or 'sem titulo'}"
-        )
-        st.caption(
-            "A exclusão remove apenas este processo e seus dados relacionados, "
-            "preservando todos os demais processos."
-        )
-        if st.button("Solicitar exclusão do processo selecionado"):
-            st.session_state.confirmar_deletar_processo = True
-
-        if st.session_state.confirmar_deletar_processo:
-            col_yes, col_no = st.columns(2)
-            with col_yes:
-                if st.button("Sim, excluir processo"):
-                    process_db.deletar_processo(conn_proc, processo_ativo["id"])
-                    st.session_state.confirmar_deletar_processo = False
-                    st.session_state.selected_processo_view_id = None
-                    st.session_state.force_modo_novo = True
-                    st.success("Processo excluído com sucesso.")
-                    st.rerun()
-            with col_no:
-                if st.button("Não, cancelar exclusão"):
-                    st.session_state.confirmar_deletar_processo = False
-                    st.info("Exclusão cancelada.")
 
