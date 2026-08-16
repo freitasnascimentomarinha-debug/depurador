@@ -1378,8 +1378,11 @@ if "cfg_usar_uf_casamento" not in st.session_state:
     st.session_state.cfg_usar_uf_casamento = True
 if "cfg_usar_qtd_casamento" not in st.session_state:
     st.session_state.cfg_usar_qtd_casamento = True
+if "cfg_process_db_path" not in st.session_state:
+    st.session_state.cfg_process_db_path = _default_process_db_path()
 
 with st.sidebar:
+    pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
     st.header("1. Entrada de dados")
     modo_entrada = st.radio(
         "Origem dos arquivos",
@@ -1407,147 +1410,7 @@ with st.sidebar:
             placeholder=r"Ex: /home/voce/entrada_orcamentos",
         )
 
-    st.header("2. Processo")
-    process_db_path = st.text_input("Banco de processos/emails", value=_default_process_db_path())
-    conn_proc = process_db.get_connection(process_db_path)
-    processos_existentes = process_db.listar_processos(conn_proc)
-    opcoes_modo_processo = ["Novo processo"]
-    if processos_existentes:
-        opcoes_modo_processo.append("Processo existente")
-    idx_modo = 0
-    if (
-        not st.session_state.force_modo_novo
-        and len(opcoes_modo_processo) > 1
-        and st.session_state.get("modo_processo") == "Processo existente"
-    ):
-        idx_modo = 1
-    modo_processo = st.radio(
-        "Vincular ingestão em",
-        opcoes_modo_processo,
-        index=idx_modo,
-        key="modo_processo",
-    )
-    st.session_state.force_modo_novo = False
-
-    processo_existente_id = None
-    processo_numero_novo = ""
-    processo_titulo_novo = ""
-    auto_detectar_processo = st.checkbox(
-        "Auto detectar numero do processo pelo assunto dos e-mails",
-        value=True,
-        help="Quando houver .eml, tenta identificar o processo automaticamente.",
-    )
-
-    if modo_processo == "Processo existente":
-        if processos_existentes:
-            opcoes = [f"{p['numero']} - {p.get('titulo') or 'sem titulo'}" for p in processos_existentes]
-            idx_proc = st.selectbox("Selecionar", range(len(opcoes)), format_func=lambda i: opcoes[i])
-            processo_existente_id = processos_existentes[idx_proc]["id"]
-            st.session_state.selected_processo_view_id = processo_existente_id
-        else:
-            st.warning("Nenhum processo existente disponível no banco.")
-            modo_processo = "Novo processo"
-
-    if modo_processo == "Novo processo":
-        processo_numero_novo = st.text_input("Numero do processo (opcional)", value="")
-        processo_titulo_novo = st.text_input("Titulo/descricao do processo", value="")
-
-    st.header("3. IA e classificação")
-    model_options = ["qwen/qwen3.5-flash-02-23"]
-
-    if _config_administrada:
-        st.markdown(
-            "<p style='font-size:0.78rem;color:#2e7d32;font-weight:700;margin:0;'>"
-            "✅ Configuração administrada ativa — nada a configurar aqui.<br>"
-            f"Modelo em uso: {st.session_state.get('cfg_model', model_options[0])}</p>",
-            unsafe_allow_html=True,
-        )
-        st.caption("Para alterar chave/modelos: aba Configurações → Administração (senha).")
-        st.session_state.show_sidebar_item3 = False
-
-    label_item3 = "Ocultar opções do item 3" if st.session_state.show_sidebar_item3 else "Mostrar opções do item 3"
-    if not _config_administrada and st.button(label_item3, key="toggle_sidebar_item3", use_container_width=True):
-        st.session_state.show_sidebar_item3 = not st.session_state.show_sidebar_item3
-
-    if st.session_state.show_sidebar_item3:
-        if api_key:
-            st.markdown(
-                "<p style='font-size:0.78rem;color:#2e7d32;font-weight:700;margin:0;'>"
-                "Chave OpenRouter carregada via secrets.</p>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning("Chave OpenRouter não encontrada em secrets.")
-
-        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
-        st.checkbox(
-            "IA juiz: decidir casamentos na zona cinzenta (score 60-84)",
-            key="cfg_usar_ia_juiz",
-            value=bool(st.session_state.get("cfg_usar_ia_juiz", True)),
-            help="Pares de itens parecidos demais para ignorar e diferentes demais "
-                 "para casar automaticamente são julgados por IA em lote (custo de centavos).",
-        )
-        st.checkbox(
-            "Classificar e-mails com IA quando heurística não for suficiente",
-            key="cfg_classificar_emails_com_ia",
-            value=bool(st.session_state.get("cfg_classificar_emails_com_ia", True)),
-        )
-        st.checkbox(
-            "Salvar anexos de e-mail no banco (download posterior)",
-            key="cfg_salvar_binario_anexos",
-            value=bool(st.session_state.get("cfg_salvar_binario_anexos", True)),
-        )
-        st.checkbox(
-            "Processar anexos de e-mail como orçamento quando suportados",
-            key="cfg_processar_orcamentos_de_anexos",
-            value=bool(st.session_state.get("cfg_processar_orcamentos_de_anexos", True)),
-        )
-    else:
-        st.caption("Opções do item 3 ocultas.")
-
-    st.header("4. Regras de extração/comparação")
-    label_item4 = "Ocultar opções do item 4" if st.session_state.show_sidebar_item4 else "Mostrar opções do item 4"
-    if st.button(label_item4, key="toggle_sidebar_item4", use_container_width=True):
-        st.session_state.show_sidebar_item4 = not st.session_state.show_sidebar_item4
-
-    if st.session_state.show_sidebar_item4:
-        try:
-            _extrair_runtime_fn, _ocr_runtime_fn = _get_extract_runtime()
-            ocr_ok, ocr_err = _ocr_runtime_fn()
-        except Exception as exc:
-            ocr_ok, ocr_err = False, str(exc)
-        if not ocr_ok:
-            st.error(f"OCR indisponível neste ambiente: {ocr_err}")
-
-        st.slider("Limiar de confiança alta (PDF estrutural)", 60, 100, value=85, key="cfg_limiar_confianca_alta")
-        st.slider("Limiar de confiança baixa (PDF estrutural)", 0, 60, value=40, key="cfg_limiar_confianca_baixa")
-        st.slider("Sensibilidade do casamento por descrição", 70, 100, value=85, key="cfg_fuzzy_threshold")
-        st.checkbox("Pré-filtrar texto antes de enviar à IA", value=True, key="cfg_pre_filtrar")
-        st.slider("Alerta número igual x descrição divergente", 0, 80, value=50, key="cfg_sanity_threshold")
-        st.checkbox(
-            "Bloquear casamento automático quando número bate e descrição diverge",
-            value=True,
-            key="cfg_bloquear_numero_incoerente",
-        )
-        st.checkbox("Usar UF na identificação dos itens", value=True, key="cfg_usar_uf_casamento")
-        st.checkbox("Usar quantidade na validação dos casamentos", value=True, key="cfg_usar_qtd_casamento")
-    else:
-        st.caption("Opções do item 4 ocultas.")
-
-    model = st.session_state.cfg_model
-    classificar_emails_com_ia = bool(st.session_state.cfg_classificar_emails_com_ia)
-    salvar_binario_anexos = bool(st.session_state.cfg_salvar_binario_anexos)
-    processar_orcamentos_de_anexos = bool(st.session_state.cfg_processar_orcamentos_de_anexos)
-    limiar_confianca_alta = int(st.session_state.cfg_limiar_confianca_alta)
-    limiar_confianca_baixa = int(st.session_state.cfg_limiar_confianca_baixa)
-    fuzzy_threshold = int(st.session_state.cfg_fuzzy_threshold)
-    pre_filtrar = bool(st.session_state.cfg_pre_filtrar)
-    sanity_threshold = int(st.session_state.cfg_sanity_threshold)
-    bloquear_numero_incoerente = bool(st.session_state.cfg_bloquear_numero_incoerente)
-    usar_uf_casamento = bool(st.session_state.cfg_usar_uf_casamento)
-    usar_qtd_casamento = bool(st.session_state.cfg_usar_qtd_casamento)
-
-    st.header("5. Mapa comparativo")
+    st.header("2. Mapa comparativo")
     st.caption("Lista mestra opcional: colunas ITEM e NOMENCLATURA")
     master_file = st.file_uploader("Lista mestra", type=["xls", "xlsx", "csv"], label_visibility="collapsed")
     gerar_master_auto = st.checkbox("Gerar lista mestra automática por consenso", value=True)
@@ -1557,16 +1420,38 @@ with st.sidebar:
     processar = st.button("🚀 Processar ingestão completa", type="primary", use_container_width=True)
 
 
+process_db_path = st.session_state.cfg_process_db_path
+conn_proc = process_db.get_connection(process_db_path)
+processos_existentes = process_db.listar_processos(conn_proc)
+modo_processo = st.session_state.get("modo_processo", "Novo processo")
+if modo_processo == "Processo existente" and not processos_existentes:
+    modo_processo = "Novo processo"
+processo_existente_id = st.session_state.get("processo_existente_id")
+processo_numero_novo = st.session_state.get("processo_numero_novo", "")
+processo_titulo_novo = st.session_state.get("processo_titulo_novo", "")
+auto_detectar_processo = bool(st.session_state.get("auto_detectar_processo", True))
+model = st.session_state.cfg_model
+classificar_emails_com_ia = bool(st.session_state.cfg_classificar_emails_com_ia)
+salvar_binario_anexos = bool(st.session_state.cfg_salvar_binario_anexos)
+processar_orcamentos_de_anexos = bool(st.session_state.cfg_processar_orcamentos_de_anexos)
+limiar_confianca_alta = int(st.session_state.cfg_limiar_confianca_alta)
+limiar_confianca_baixa = int(st.session_state.cfg_limiar_confianca_baixa)
+fuzzy_threshold = int(st.session_state.cfg_fuzzy_threshold)
+pre_filtrar = bool(st.session_state.cfg_pre_filtrar)
+sanity_threshold = int(st.session_state.cfg_sanity_threshold)
+bloquear_numero_incoerente = bool(st.session_state.cfg_bloquear_numero_incoerente)
+usar_uf_casamento = bool(st.session_state.cfg_usar_uf_casamento)
+usar_qtd_casamento = bool(st.session_state.cfg_usar_qtd_casamento)
+
 budget_db_path = st.session_state.budget_db_path
 forcar_reprocessamento = bool(st.session_state.forcar_reprocessamento)
 
-aba_pipeline, aba_emails, aba_relatorio, aba_fornecedores, aba_mapa, aba_configuracoes = st.tabs([
+aba_pipeline, aba_emails, aba_relatorio, aba_fornecedores, aba_mapa = st.tabs([
     "Pipeline",
     "Emails do Processo",
     "Relatório do Processo",
     "Fornecedores",
     "Mapa Comparativo",
-    "Configurações",
 ])
 
 processos_view = process_db.listar_processos(conn_proc)
@@ -2905,13 +2790,91 @@ with aba_mapa:
                     st.error(f"Falha ao salvar decisões: {exc}")
 
 
-with aba_configuracoes:
+if pagina_sidebar == "Configurações":
     st.subheader("Configurações")
+    aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_administracao = st.tabs([
+        "Processo",
+        "IA e classificação",
+        "Regras de extração/comparação",
+        "Administração",
+    ])
+
+    with aba_processo_cfg:
+        st.session_state.cfg_process_db_path = st.text_input(
+            "Banco de processos/emails",
+            value=st.session_state.cfg_process_db_path,
+            key="process_db_path_input",
+        )
+        processos_cfg = process_db.listar_processos(
+            process_db.get_connection(st.session_state.cfg_process_db_path)
+        )
+        opcoes_modo = ["Novo processo"]
+        if processos_cfg:
+            opcoes_modo.append("Processo existente")
+        modo_atual = st.session_state.get("modo_processo", "Novo processo")
+        indice_modo = opcoes_modo.index(modo_atual) if modo_atual in opcoes_modo else 0
+        modo_cfg = st.radio("Vincular ingestão em", opcoes_modo, index=indice_modo)
+        st.session_state.modo_processo = modo_cfg
+
+        if modo_cfg == "Processo existente":
+            opcoes_processos = [f"{p['numero']} - {p.get('titulo') or 'sem titulo'}" for p in processos_cfg]
+            indice_processo = st.selectbox("Selecionar", range(len(opcoes_processos)), format_func=lambda i: opcoes_processos[i])
+            st.session_state.processo_existente_id = processos_cfg[indice_processo]["id"]
+            st.session_state.selected_processo_view_id = st.session_state.processo_existente_id
+        else:
+            st.session_state.processo_existente_id = None
+            st.session_state.processo_numero_novo = st.text_input(
+                "Numero do processo (opcional)", value=st.session_state.get("processo_numero_novo", "")
+            )
+            st.session_state.processo_titulo_novo = st.text_input(
+                "Titulo/descricao do processo", value=st.session_state.get("processo_titulo_novo", "")
+            )
+        st.session_state.auto_detectar_processo = st.checkbox(
+            "Auto detectar numero do processo pelo assunto dos e-mails",
+            value=bool(st.session_state.get("auto_detectar_processo", True)),
+            help="Quando houver .eml, tenta identificar o processo automaticamente.",
+        )
+
+    with aba_ia_cfg:
+        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
+        st.caption("Modelo forte: openai/gpt-5.6-luna")
+        if not api_key:
+            st.warning("Chave OpenRouter não encontrada em secrets ou na administração.")
+        st.checkbox(
+            "IA juiz: decidir casamentos na zona cinzenta (score 60-84)",
+            key="cfg_usar_ia_juiz",
+        )
+        st.checkbox(
+            "Classificar e-mails com IA quando heurística não for suficiente",
+            key="cfg_classificar_emails_com_ia",
+        )
+        st.checkbox("Salvar anexos de e-mail no banco (download posterior)", key="cfg_salvar_binario_anexos")
+        st.checkbox(
+            "Processar anexos de e-mail como orçamento quando suportados",
+            key="cfg_processar_orcamentos_de_anexos",
+        )
+
+    with aba_regras_cfg:
+        try:
+            _extrair_runtime_fn, _ocr_runtime_fn = _get_extract_runtime()
+            ocr_ok, ocr_err = _ocr_runtime_fn()
+        except Exception as exc:
+            ocr_ok, ocr_err = False, str(exc)
+        if not ocr_ok:
+            st.error(f"OCR indisponível neste ambiente: {ocr_err}")
+        st.slider("Limiar de confiança alta (PDF estrutural)", 60, 100, key="cfg_limiar_confianca_alta")
+        st.slider("Limiar de confiança baixa (PDF estrutural)", 0, 60, key="cfg_limiar_confianca_baixa")
+        st.slider("Sensibilidade do casamento por descrição", 70, 100, key="cfg_fuzzy_threshold")
+        st.checkbox("Pré-filtrar texto antes de enviar à IA", key="cfg_pre_filtrar")
+        st.slider("Alerta número igual x descrição divergente", 0, 80, key="cfg_sanity_threshold")
+        st.checkbox("Bloquear casamento automático quando número bate e descrição diverge", key="cfg_bloquear_numero_incoerente")
+        st.checkbox("Usar UF na identificação dos itens", key="cfg_usar_uf_casamento")
+        st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
 
     # ------------------------------------------------------------------
     # 🔐 Administração: chave OpenRouter e modelos (protegido por senha)
     # ------------------------------------------------------------------
-    with st.expander("🔐 Administração (chave OpenRouter e modelos)", expanded=False):
+    with aba_administracao:
         _cfg = app_config.carregar_config()
         if not app_config.tem_senha(_cfg):
             st.info(
