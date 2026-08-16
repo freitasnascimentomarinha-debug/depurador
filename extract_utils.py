@@ -48,12 +48,12 @@ MODEL_PRICING_PER_MILLION = {
     "anthropic/claude-3-haiku": {"input": 0.25, "output": 1.25},
 }
 
-# Modelo padrao de extracao: barato, rapido, com suporte a structured outputs.
-DEFAULT_EXTRACTION_MODEL = "google/gemini-2.5-flash"
+# Modelo padrao de extracao: rapido, com suporte a structured outputs.
+DEFAULT_EXTRACTION_MODEL = "qwen/qwen3.5-flash-02-23"
 
 # Escalonamento: quando o modelo barato falha ou extrai zero itens, uma unica
 # retentativa com modelo forte (pago so nos ~5% de documentos dificeis).
-ESCALATION_MODEL = "google/gemini-2.5-pro"
+ESCALATION_MODEL = "openai/gpt-5.6-luna"
 
 _OCR_MIN_ALNUM = 25
 _OCR_MIN_TOKENS = 6

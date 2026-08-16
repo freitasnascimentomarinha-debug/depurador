@@ -1317,7 +1317,7 @@ except Exception:
     _config_administrada = False
 if _config_administrada:
     if "cfg_model" not in st.session_state:
-        st.session_state.cfg_model = _cfg_admin.get("modelo") or "google/gemini-2.5-flash"
+        st.session_state.cfg_model = _cfg_admin.get("modelo") or "qwen/qwen3.5-flash-02-23"
     if "cfg_usar_ia_juiz" not in st.session_state:
         st.session_state.cfg_usar_ia_juiz = bool(_cfg_admin.get("usar_ia_juiz", True))
     if "cfg_classificar_emails_com_ia" not in st.session_state:
@@ -2916,8 +2916,8 @@ with aba_configuracoes:
     # ------------------------------------------------------------------
     with st.expander("🔐 Administração (chave OpenRouter e modelos)", expanded=False):
         _cfg = app_config.carregar_config()
-        _MODELOS_PRINCIPAIS = ["google/gemini-2.5-flash", "deepseek/deepseek-chat-v3.2", "openai/gpt-5-mini"]
-        _MODELOS_FORTES = ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4.5", "openai/gpt-5"]
+        _MODELOS_PRINCIPAIS = ["qwen/qwen3.5-flash-02-23", "google/gemini-2.5-flash", "deepseek/deepseek-chat-v3.2", "openai/gpt-5-mini"]
+        _MODELOS_FORTES = ["openai/gpt-5.6-luna", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4.5", "openai/gpt-5"]
 
         if not app_config.tem_senha(_cfg):
             st.info(

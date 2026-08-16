@@ -28,8 +28,8 @@ MODEL_PRICING_PER_MILLION = {
     "anthropic/claude-3-haiku": {"input": 0.25, "output": 1.25},
 }
 
-# Classificacao e tarefa simples: use o modelo mais barato disponivel.
-DEFAULT_CLASSIFIER_MODEL = "google/gemini-2.5-flash"
+# Classificacao usa o mesmo modelo principal configurado para o sistema.
+DEFAULT_CLASSIFIER_MODEL = "qwen/qwen3.5-flash-02-23"
 
 # JSON Schema para structured outputs na classificacao
 CLASSIFICATION_JSON_SCHEMA = {

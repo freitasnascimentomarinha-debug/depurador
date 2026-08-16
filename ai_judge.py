@@ -14,7 +14,7 @@ import time
 
 import requests
 
-DEFAULT_JUDGE_MODEL = "google/gemini-2.5-flash"
+DEFAULT_JUDGE_MODEL = "qwen/qwen3.5-flash-02-23"
 BATCH_SIZE = 20
 
 _SYSTEM_PROMPT = """Você é um especialista em compras públicas e catalogação de materiais.
