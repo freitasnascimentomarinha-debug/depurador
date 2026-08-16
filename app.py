@@ -131,14 +131,7 @@ def _get_extract_runtime():
 
 
 def _load_openrouter_api_key() -> str:
-    # 1) Configuração administrada (config_app.json, aba Configurações → Administração)
-    try:
-        cfg = app_config.carregar_config()
-        if (cfg.get("openrouter_api_key") or "").strip():
-            return str(cfg["openrouter_api_key"]).strip()
-    except Exception:
-        pass
-    # 2) Secrets do Streamlit (arquivo secrets.toml pode nem existir localmente)
+    # 1) Secrets do Streamlit (arquivo secrets.toml pode nem existir localmente)
     try:
         for secret_name in ("OPENROUTER_API_KEY", "openrouter_api_key"):
             api_key = st.secrets.get(secret_name)
@@ -146,8 +139,16 @@ def _load_openrouter_api_key() -> str:
                 return str(api_key).strip()
     except Exception:
         pass
-    # 3) Variável de ambiente
-    return os.getenv("OPENROUTER_API_KEY", "").strip()
+    # 2) Variável de ambiente
+    env_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    # 3) Legado: config_app.json (mantido para compatibilidade com instalações antigas)
+    try:
+        cfg = app_config.carregar_config()
+        return str(cfg.get("openrouter_api_key") or "").strip()
+    except Exception:
+        return ""
 
 
 def _to_int(value) -> int:
@@ -1311,25 +1312,21 @@ if IMPORT_ERROR is not None:
 
 api_key = _load_openrouter_api_key()
 
-# Configuração administrada: defaults definidos pelo admin valem para todos
+# Defaults gerais (chave e modelos vêm de secrets/env; sem senha administrativa)
 try:
     _cfg_admin = app_config.carregar_config()
-    _config_administrada = app_config.config_administrada(_cfg_admin)
 except Exception:
     _cfg_admin = {}
-    _config_administrada = False
-if _config_administrada:
-    st.session_state.cfg_model = "qwen/qwen3.5-flash-02-23"
-    if "cfg_usar_ia_juiz" not in st.session_state:
-        st.session_state.cfg_usar_ia_juiz = bool(_cfg_admin.get("usar_ia_juiz", True))
-    if "cfg_classificar_emails_com_ia" not in st.session_state:
-        st.session_state.cfg_classificar_emails_com_ia = bool(_cfg_admin.get("classificar_emails_com_ia", True))
-    try:
-        import extract_utils as _eu
-        if _cfg_admin.get("modelo_escalonamento"):
-            _eu.ESCALATION_MODEL = _cfg_admin["modelo_escalonamento"]
-    except Exception:
-        pass
+if "cfg_usar_ia_juiz" not in st.session_state:
+    st.session_state.cfg_usar_ia_juiz = bool(_cfg_admin.get("usar_ia_juiz", True))
+if "cfg_classificar_emails_com_ia" not in st.session_state:
+    st.session_state.cfg_classificar_emails_com_ia = bool(_cfg_admin.get("classificar_emails_com_ia", True))
+try:
+    import extract_utils as _eu
+    if _cfg_admin.get("modelo_escalonamento"):
+        _eu.ESCALATION_MODEL = _cfg_admin["modelo_escalonamento"]
+except Exception:
+    pass
 ocr_ok, ocr_err = True, None
 
 if "last_result" not in st.session_state:
@@ -1516,22 +1513,15 @@ if pagina_sidebar == "Configurações":
         st.slider("Confiança mínima do consenso", min_value=60, max_value=100, key="cfg_consensus_threshold", help="Similaridade mínima entre descrições para formar consenso. Recomendado: 80.")
 
     with aba_administracao:
-        _cfg = app_config.carregar_config()
         st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
-        if not app_config.tem_senha(_cfg):
-            st.info("Defina uma senha de administrador para configurar a chave OpenRouter.")
-        elif not st.session_state.get("admin_unlocked"):
-            senha_login = st.text_input("Senha de administrador", type="password")
-            if st.button("Desbloquear administração") and app_config.verificar_senha(_cfg, senha_login):
-                st.session_state.admin_unlocked = True
-                st.rerun()
+        if api_key:
+            st.success("Chave OpenRouter carregada via secrets.")
         else:
-            nova_chave = st.text_input("Chave da API OpenRouter", value=_cfg.get("openrouter_api_key") or "", type="password")
-            if st.button("Salvar chave OpenRouter"):
-                _cfg["openrouter_api_key"] = (nova_chave or "").strip()
-                app_config.salvar_config(_cfg)
-                st.success("Configuração salva.")
+            st.warning(
+                "Chave OpenRouter ausente. Defina OPENROUTER_API_KEY em "
+                ".streamlit/secrets.toml (ou nos Secrets do Streamlit Cloud)."
+            )
 
         st.divider()
         st.write("Cache de orçamentos e manutenção do processo selecionado")
