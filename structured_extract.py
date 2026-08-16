@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import unicodedata
 from typing import Any
 
@@ -47,6 +49,16 @@ _ITEM_LINE_RE = re.compile(r"^\d{1,4}$")
 _PI_LINE_RE = re.compile(r"^\d{6,12}$")
 _PRICE_LINE_RE = re.compile(r"^R\$\s*")
 _PRAZO_RE = re.compile(r"\bsemana", re.IGNORECASE)
+
+# Linha-resumo do item no "modelo de proposta" padrão (ITEM / CÓDIGO / DESCRIÇÃO
+# / UF / QTDE / ... valores), usada quando a tabela de itens não é reconhecida
+# como tabela real pelo pdfplumber.extract_tables() (ex.: PDF de 89 páginas da
+# Akita, onde só as tabelas de características técnicas são detectadas).
+_RE_LINHA_MODELO_PROPOSTA = re.compile(
+    r"^\s*(\d{1,4})\s+([A-Z0-9][A-Z0-9._/-]{3,})\s+(.+?)\s{2,}"
+    r"([A-Z]{1,3})\s+(\d{1,6})\s+(.*\S)\s*$"
+)
+_RE_MOEDA = re.compile(r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})")
 
 
 def _import_document():
@@ -171,6 +183,54 @@ def _mapear_colunas(headers: list[str]) -> dict[str, int]:
         mapeamento[campo] = idx
         ocupadas.add(idx)
     return mapeamento
+
+
+def _deduplicar_por_numero_item(itens: list[dict]) -> list[dict]:
+    """Deduplica itens do MESMO arquivo quando o mesmo numero_item aparece em
+    mais de uma aba/tabela (ex.: a mesma planilha extraída duas vezes, com
+    nomenclaturas diferentes em cada aba — não é erro de casamento entre
+    fornecedores diferentes, é redundância dentro do próprio arquivo, e
+    poluía a revisão com falsos "código igual, descrição muito diferente").
+
+    Mantém uma linha por numero_item, priorizando a ocorrência mais recente
+    (abas/tabelas seguintes costumam trazer prazo e quantidade cotada) e
+    completando campos ausentes com as demais ocorrências do mesmo número.
+    Itens sem numero_item não são tocados (não há chave segura para deduplicar).
+    """
+    sem_numero = [i for i in itens if not i.get("numero_item")]
+    com_numero = [i for i in itens if i.get("numero_item")]
+
+    grupos: dict[str, list[dict]] = {}
+    ordem: list[str] = []
+    for item in com_numero:
+        chave = str(item["numero_item"]).strip()
+        if chave not in grupos:
+            grupos[chave] = []
+            ordem.append(chave)
+        grupos[chave].append(item)
+
+    resultado = []
+    for chave in ordem:
+        grupo = grupos[chave]
+        if len(grupo) == 1:
+            resultado.append(grupo[0])
+            continue
+
+        base = dict(grupo[-1])
+        for campo in ("codigo", "unidade", "quantidade", "preco_unitario", "preco_total"):
+            if base.get(campo) in (None, ""):
+                for outro in reversed(grupo[:-1]):
+                    if outro.get(campo) not in (None, ""):
+                        base[campo] = outro[campo]
+                        break
+        if not base.get("descricao"):
+            for outro in reversed(grupo[:-1]):
+                if outro.get("descricao"):
+                    base["descricao"] = outro["descricao"]
+                    break
+        resultado.append(base)
+
+    return resultado + sem_numero
 
 
 def _extrair_itens_pdf_por_linhas(path: str) -> dict:
@@ -355,6 +415,7 @@ def extrair_xlsx_estruturado(path: str) -> list[dict] | None:
             }
             itens.append(normalizar_item(item))
 
+    itens = _deduplicar_por_numero_item(itens)
     return itens or None
 
 
@@ -418,11 +479,160 @@ def extrair_docx_estruturado(path: str) -> list[dict] | None:
             }
             itens.append(normalizar_item(item))
 
+    itens = _deduplicar_por_numero_item(itens)
     return itens or None
 
 
+def _texto_layout_pdf(path: str) -> str:
+    """Extrai texto do PDF preservando o layout de colunas.
+
+    Prioriza `pdftotext -layout` (poppler): preserva espaçamento entre colunas
+    melhor que o pdfplumber em tabelas sem linha de grade, evitando que a
+    linha-resumo do item colapse em espaço único. Cai para
+    pdfplumber.extract_text(layout=True) quando o poppler não está instalado
+    (ex.: Windows local sem poppler-utils).
+    """
+    if shutil.which("pdftotext"):
+        try:
+            resultado = subprocess.run(
+                ["pdftotext", "-layout", path, "-"],
+                capture_output=True, timeout=300,
+            )
+            texto = resultado.stdout.decode("utf-8", errors="ignore")
+            if texto.strip():
+                return texto
+        except Exception:
+            pass
+
+    pdfplumber = _import_pdfplumber()
+    if pdfplumber is None:
+        return ""
+    try:
+        with pdfplumber.open(path) as pdf:
+            return "\n".join((p.extract_text(layout=True) or "") for p in pdf.pages)
+    except Exception:
+        return ""
+
+
+def _par_coerente(valores: list[float], qtd: float | None) -> tuple[float | None, float | None, bool]:
+    """Escolhe entre os valores monetários candidatos da linha qual par
+    (unitario, total) fecha a conta unitario * qtd ~= total, em vez de supor
+    que os dois últimos números da linha são sempre o par certo — a coluna
+    pode estar deslocada (ex.: PRAZO DE ENTREGA formatado como valor
+    monetário empurra o unitário real para uma posição inesperada).
+
+    Retorna (unitario, total, incerto). `incerto=True` sinaliza que o par
+    escolhido não é o par ingênuo (últimos dois valores) ou que nenhum par
+    fechou a conta — casos que merecem revisão manual.
+    """
+    if len(valores) < 2:
+        return (None, None, True)
+
+    esperado = (valores[-2], valores[-1])
+    if not qtd:
+        return (esperado[0], esperado[1], True)
+
+    melhor = None
+    melhor_erro = None
+    for i, unit in enumerate(valores):
+        for j, total in enumerate(valores):
+            if i == j:
+                continue
+            tolerancia = max(0.05, 0.005 * abs(total))
+            erro = abs(unit * qtd - total)
+            if erro <= tolerancia and (melhor_erro is None or erro < melhor_erro):
+                melhor = (unit, total)
+                melhor_erro = erro
+
+    if melhor:
+        return (melhor[0], melhor[1], melhor != esperado)
+
+    # nenhum par fecha a conta: mantém o padrão conservador, mas sinaliza
+    return (esperado[0], esperado[1], True)
+
+
+def extrair_pdf_modelo_proposta(path: str) -> dict:
+    """Extração por regex sobre texto com layout preservado — alternativa ao
+    extract_tables() do pdfplumber para PDFs cujo modelo de proposta tem a
+    linha-resumo do item (com número, código, descrição, UF, quantidade e
+    preços) fora de qualquer tabela reconhecível como tal (só as tabelas de
+    características técnicas são detectadas nesses casos, deixando o preço
+    de fora da extração)."""
+    texto = _texto_layout_pdf(path)
+    itens: list[dict] = []
+    review: list[dict] = []
+    vistos: set[int] = set()
+
+    for linha in texto.splitlines():
+        m = _RE_LINHA_MODELO_PROPOSTA.match(linha)
+        if not m:
+            continue
+        num, cod, nome, uf, qt, resto = m.groups()
+        try:
+            numero_int = int(num)
+        except ValueError:
+            continue
+        if numero_int in vistos:
+            continue
+
+        valores = [v for v in (parse_valor_brl(v) for v in _RE_MOEDA.findall(resto)) if v is not None]
+        if len(valores) < 2:
+            continue
+
+        qtd_num = parse_valor_brl(qt)
+        preco_unitario, preco_total, incerto = _par_coerente(valores, qtd_num)
+        vistos.add(numero_int)
+
+        descricao = limpar_quebras_e_caracteres(nome.strip())
+        item = {
+            "numero_item": num,
+            "codigo": cod.strip(),
+            "descricao": descricao,
+            "unidade": uf.strip(),
+            "quantidade": qtd_num,
+            "preco_unitario": preco_unitario,
+            "preco_total": preco_total,
+            "fonte_extracao": "estrutural",
+            "origem": os.path.basename(path),
+        }
+        itens.append(normalizar_item(item))
+
+        if incerto:
+            review.append({
+                "tipo": "coluna de valor possivelmente deslocada (prazo/entrega)",
+                "numero_item": num,
+                "descricao_nova": f"{descricao} [candidatos: {valores}]",
+                "casou_com": f"unit={preco_unitario} total={preco_total} qtd={qtd_num}",
+                "score": 0,
+            })
+
+    return {"itens": itens, "review": review}
+
+
 def tentar_extracao_estrutural_pdf(path: str) -> dict:
-    """Tenta extrair tabelas de PDF com pdfplumber e retorna metadados para score."""
+    """Tenta extrair itens de PDF, em duas camadas:
+
+    1) Regex sobre texto com layout de colunas preservado (poppler/pdfplumber)
+       — cobre modelos de proposta onde a linha-resumo do item (com o preço)
+       não é reconhecida como tabela real pelo extract_tables() do pdfplumber
+       (ex.: PDF de 89 páginas onde só as tabelas de características técnicas
+       são detectadas, deixando o preço de fora).
+    2) extract_tables() do pdfplumber, para PDFs com tabela real reconhecível.
+
+    Se a camada 1 devolver itens, ela é usada e a camada 2 é pulada.
+    """
+    resultado_layout = extrair_pdf_modelo_proposta(path)
+    if resultado_layout.get("itens"):
+        itens = resultado_layout["itens"]
+        return {
+            "itens": itens,
+            "encontrou_tabela": True,
+            "encontrou_colunas": True,
+            "linhas_extraidas": len(itens),
+            "blocos_item": len(itens),
+            "review": resultado_layout.get("review", []),
+        }
+
     pdfplumber = _import_pdfplumber()
     itens = []
     encontrou_tabela = False
@@ -436,6 +646,7 @@ def tentar_extracao_estrutural_pdf(path: str) -> dict:
             "encontrou_colunas": False,
             "linhas_extraidas": 0,
             "blocos_item": 0,
+            "review": [],
         }
 
     with pdfplumber.open(path) as pdf:
@@ -503,10 +714,13 @@ def tentar_extracao_estrutural_pdf(path: str) -> dict:
         if resultado_linhas.get("header_reconhecido"):
             encontrou_colunas = True
 
+    itens = _deduplicar_por_numero_item(itens)
+
     return {
         "itens": itens,
         "encontrou_tabela": encontrou_tabela,
         "encontrou_colunas": encontrou_colunas,
         "linhas_extraidas": len(itens),
         "blocos_item": blocos_item,
+        "review": [],
     }

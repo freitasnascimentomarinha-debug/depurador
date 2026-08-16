@@ -1191,6 +1191,7 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
             confianca = max(0, confianca - 10)
             debug_events.append("Ajuste aplicado: PDF escaneado detectado, penalidade de confianca estrutural")
 
+        review.extend(resultado_estrutural.get("review") or [])
         debug_events.append(f"Percepcao do sistema: confianca estrutural = {confianca}")
 
         llm = call_openrouter_extract(

@@ -248,6 +248,17 @@ def _pick_master_column(headers: list[str], aliases: set[str]) -> int | None:
     return None
 
 
+class _BytesUploadLike(io.BytesIO):
+    """Adapta bytes crus para a interface esperada por `_ler_master_items`
+    (mesmo protocolo do UploadedFile do Streamlit: .name + arquivo binário),
+    permitindo montar a lista de referência a partir de um anexo já lido em
+    memória (ex.: o anexo-modelo institucional), sem passar por upload manual."""
+
+    def __init__(self, nome: str, dados: bytes):
+        super().__init__(dados)
+        self.name = nome
+
+
 def _ler_master_items(master_file) -> list[dict]:
     nome = (master_file.name or "").lower()
     if nome.endswith(".csv"):
@@ -1902,6 +1913,8 @@ if processar:
                     _RE_INSTITUCIONAL = re.compile(r"\.mil\.br$|\.mar\.mil\.br$|\.marinha\.mil\.br$")
                     parsed_emls = []
                     template_hashes: set[str] = set()
+                    template_anexo_bytes = None
+                    template_anexo_nome = None
                     for eml in eml_entries:
                         _parsed_pre = email_utils.parse_eml(eml["conteudo_bytes"], filename=eml["nome"])
                         parsed_emls.append(_parsed_pre)
@@ -1910,12 +1923,34 @@ if processar:
                             for _anx_pre in _parsed_pre.get("anexos", []):
                                 try:
                                     template_hashes.add(file_utils.hash_bytes(_anx_pre["conteudo_bytes"]))
+                                    if template_anexo_bytes is None and _is_budget_file((_anx_pre.get("nome") or "").lower()):
+                                        template_anexo_bytes = _anx_pre["conteudo_bytes"]
+                                        template_anexo_nome = _anx_pre.get("nome") or "template.xlsx"
                                 except Exception:
                                     pass
                     if template_hashes:
                         add_log(
                             f"Pré-passagem: {len(template_hashes)} hash(es) de template institucional registrados."
                         )
+
+                    # O anexo-modelo institucional (pedido de orçamento enviado a
+                    # todos os fornecedores) já traz item, PI, quantidade e UF —
+                    # é a âncora natural da lista de referência quando o usuário
+                    # não fez upload manual de uma lista mestra.
+                    if not lista_referencia_extracao and template_anexo_bytes:
+                        try:
+                            auto_referencia = _ler_master_items(
+                                _BytesUploadLike(template_anexo_nome, template_anexo_bytes)
+                            )
+                        except Exception as exc:
+                            auto_referencia = None
+                            add_log(f"Aviso: falha ao ler anexo-modelo institucional como lista de referência: {exc}")
+                        if auto_referencia:
+                            lista_referencia_extracao = auto_referencia
+                            add_log(
+                                f"Lista de referência montada a partir do anexo institucional "
+                                f"'{template_anexo_nome}': {len(auto_referencia)} item(ns)."
+                            )
 
                     for parsed in parsed_emls:
                         rem_email = parsed.get("remetente_email", "")
