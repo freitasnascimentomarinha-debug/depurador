@@ -1403,6 +1403,82 @@ with st.sidebar:
     processar = st.button("🚀 Processar ingestão completa", type="primary", use_container_width=True)
 
 
+if pagina_sidebar == "Configurações":
+    st.subheader("Configurações")
+    aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_administracao = st.tabs([
+        "Processo",
+        "IA e classificação",
+        "Regras de extração/comparação",
+        "Administração",
+    ])
+
+    with aba_processo_cfg:
+        st.session_state.cfg_process_db_path = st.text_input(
+            "Banco de processos/emails",
+            value=st.session_state.cfg_process_db_path,
+            key="process_db_path_input_config",
+        )
+        processos_cfg = process_db.listar_processos(
+            process_db.get_connection(st.session_state.cfg_process_db_path)
+        )
+        opcoes_modo = ["Novo processo"]
+        if processos_cfg:
+            opcoes_modo.append("Processo existente")
+        modo_atual = st.session_state.get("modo_processo", "Novo processo")
+        indice_modo = opcoes_modo.index(modo_atual) if modo_atual in opcoes_modo else 0
+        modo_cfg = st.radio("Vincular ingestão em", opcoes_modo, index=indice_modo)
+        st.session_state.modo_processo = modo_cfg
+        if modo_cfg == "Processo existente":
+            opcoes_processos = [f"{p['numero']} - {p.get('titulo') or 'sem titulo'}" for p in processos_cfg]
+            indice_processo = st.selectbox("Selecionar", range(len(opcoes_processos)), format_func=lambda i: opcoes_processos[i])
+            st.session_state.processo_existente_id = processos_cfg[indice_processo]["id"]
+            st.session_state.selected_processo_view_id = st.session_state.processo_existente_id
+        else:
+            st.session_state.processo_existente_id = None
+            st.session_state.processo_numero_novo = st.text_input("Numero do processo (opcional)")
+            st.session_state.processo_titulo_novo = st.text_input("Titulo/descricao do processo")
+        st.session_state.auto_detectar_processo = st.checkbox(
+            "Auto detectar numero do processo pelo assunto dos e-mails", value=True
+        )
+
+    with aba_ia_cfg:
+        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
+        st.caption("Modelo forte: openai/gpt-5.6-luna")
+        st.checkbox("IA juiz: decidir casamentos na zona cinzenta (score 60-84)", key="cfg_usar_ia_juiz")
+        st.checkbox("Classificar e-mails com IA quando heurística não for suficiente", key="cfg_classificar_emails_com_ia")
+        st.checkbox("Salvar anexos de e-mail no banco (download posterior)", key="cfg_salvar_binario_anexos")
+        st.checkbox("Processar anexos de e-mail como orçamento quando suportados", key="cfg_processar_orcamentos_de_anexos")
+
+    with aba_regras_cfg:
+        st.slider("Limiar de confiança alta (PDF estrutural)", 60, 100, key="cfg_limiar_confianca_alta")
+        st.slider("Limiar de confiança baixa (PDF estrutural)", 0, 60, key="cfg_limiar_confianca_baixa")
+        st.slider("Sensibilidade do casamento por descrição", 70, 100, key="cfg_fuzzy_threshold")
+        st.checkbox("Pré-filtrar texto antes de enviar à IA", key="cfg_pre_filtrar")
+        st.slider("Alerta número igual x descrição divergente", 0, 80, key="cfg_sanity_threshold")
+        st.checkbox("Bloquear casamento automático quando número bate e descrição diverge", key="cfg_bloquear_numero_incoerente")
+        st.checkbox("Usar UF na identificação dos itens", key="cfg_usar_uf_casamento")
+        st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
+
+    with aba_administracao:
+        _cfg = app_config.carregar_config()
+        st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
+        st.caption("Modelo forte: openai/gpt-5.6-luna")
+        if not app_config.tem_senha(_cfg):
+            st.info("Defina uma senha de administrador para configurar a chave OpenRouter.")
+        elif not st.session_state.get("admin_unlocked"):
+            senha_login = st.text_input("Senha de administrador", type="password")
+            if st.button("Desbloquear administração") and app_config.verificar_senha(_cfg, senha_login):
+                st.session_state.admin_unlocked = True
+                st.rerun()
+        else:
+            nova_chave = st.text_input("Chave da API OpenRouter", value=_cfg.get("openrouter_api_key") or "", type="password")
+            if st.button("Salvar chave OpenRouter"):
+                _cfg["openrouter_api_key"] = (nova_chave or "").strip()
+                app_config.salvar_config(_cfg)
+                st.success("Configuração salva.")
+    st.stop()
+
+
 process_db_path = st.session_state.cfg_process_db_path
 conn_proc = process_db.get_connection(process_db_path)
 processos_existentes = process_db.listar_processos(conn_proc)
