@@ -407,6 +407,8 @@ def _candidate_item_lines(text: str, numero_item, descricao: str):
 
 
 def _enrich_item_fields(result: dict, text: str) -> dict:
+    if not isinstance(result, dict):
+        return result
     itens = result.get("itens")
     if not isinstance(itens, list):
         return result
@@ -583,13 +585,17 @@ def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
             content_clean = re.sub(r"^```json\s*|\s*```$", "", content.strip(), flags=re.MULTILINE)
             content_clean = content_clean.strip().strip("`")
             parsed = json.loads(content_clean)
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"Resposta JSON da IA não é um objeto (tipo recebido: {type(parsed).__name__})"
+                )
             parsed = _enrich_item_fields(parsed, texto_base)
             if isinstance(parsed.get("itens"), list):
                 parsed["itens"] = [normalizar_item(i) for i in parsed["itens"] if isinstance(i, dict)]
             parsed["texto_truncado"] = texto_truncado
             parsed["usage"] = _extract_usage_info(data, model)
             return parsed
-        except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError) as exc:
+        except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
             last_error = str(exc)
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)

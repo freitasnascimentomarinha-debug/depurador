@@ -718,6 +718,16 @@ def email_ja_importado(conn: sqlite3.Connection, processo_id: int, message_id: s
     return row is not None
 
 
+def buscar_email_importado(conn: sqlite3.Connection, processo_id: int, message_id: str) -> dict | None:
+    """Retorna o e-mail já salvo para permitir reprocessar seus anexos."""
+    row = conn.execute(
+        "SELECT id, tipo, confianca_tipo, resumo FROM emails "
+        "WHERE processo_id = ? AND message_id = ?",
+        (processo_id, message_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def salvar_email(
     conn: sqlite3.Connection,
     processo_id: int,

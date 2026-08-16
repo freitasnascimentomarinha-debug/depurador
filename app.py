@@ -1988,40 +1988,47 @@ if processar:
                                 processo_criado_agora = True
                                 add_log(f"Processo criado automaticamente: {processo_numero}")
 
-                        if process_db.email_ja_importado(conn_proc, processo_id, parsed["message_id"]):
-                            n_emails_dup += 1
-                            continue
-
-                        if classificar_emails_com_ia:
-                            clf = email_classifier.classificar_email(parsed, api_key, model)
-                        else:
-                            tipo_heur = email_classifier._heuristica(parsed) or "outro"
-                            clf = {
-                                "tipo": tipo_heur,
-                                "confianca": 80,
-                                "resumo": "",
-                                "numero_processo": None,
-                                "uso_ia": False,
-                                "usage": {},
-                            }
-
-                        if clf.get("uso_ia"):
-                            n_emails_ia += 1
-                            usage = clf.get("usage") or {}
-                            tokens_emails += _to_int(usage.get("total_tokens"))
-                            custo_emails += _to_float(usage.get("cost_usd"))
-
-                        email_id = process_db.salvar_email(
-                            conn_proc,
-                            processo_id,
-                            parsed,
-                            clf.get("tipo") or "outro",
-                            int(clf.get("confianca") or 0),
-                            clf.get("resumo") or "",
+                        email_existente = process_db.buscar_email_importado(
+                            conn_proc, processo_id, parsed["message_id"]
                         )
-                        n_emails_novos += 1
+                        if email_existente:
+                            n_emails_dup += 1
+                            email_id = email_existente["id"]
+                            tipo_email = email_existente.get("tipo") or "outro"
+                            add_log(
+                                f"E-mail já importado; anexos serão reavaliados: "
+                                f"{parsed.get('arquivo_eml_nome') or parsed.get('assunto') or parsed['message_id']}"
+                            )
+                        else:
+                            if classificar_emails_com_ia:
+                                clf = email_classifier.classificar_email(parsed, api_key, model)
+                            else:
+                                tipo_heur = email_classifier._heuristica(parsed) or "outro"
+                                clf = {
+                                    "tipo": tipo_heur,
+                                    "confianca": 80,
+                                    "resumo": "",
+                                    "numero_processo": None,
+                                    "uso_ia": False,
+                                    "usage": {},
+                                }
 
-                        tipo_email = clf.get("tipo") or "outro"
+                            if clf.get("uso_ia"):
+                                n_emails_ia += 1
+                                usage = clf.get("usage") or {}
+                                tokens_emails += _to_int(usage.get("total_tokens"))
+                                custo_emails += _to_float(usage.get("cost_usd"))
+
+                            email_id = process_db.salvar_email(
+                                conn_proc,
+                                processo_id,
+                                parsed,
+                                clf.get("tipo") or "outro",
+                                int(clf.get("confianca") or 0),
+                                clf.get("resumo") or "",
+                            )
+                            n_emails_novos += 1
+                            tipo_email = clf.get("tipo") or "outro"
 
                         if tipo_email == "orcamento_recebido" and not parsed.get("anexos"):
                             add_log(
@@ -2034,7 +2041,7 @@ if processar:
                         melhor_pontuacao = -10_000
                         for anx in parsed.get("anexos", []):
                             n_anexos_total += 1
-                            if salvar_binario_anexos:
+                            if salvar_binario_anexos and not email_existente:
                                 process_db.salvar_anexo(
                                     conn_proc,
                                     email_id,
