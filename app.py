@@ -1408,6 +1408,16 @@ if not st.session_state.get("cfg_perfil_recomendado_v1"):
         "cfg_perfil_recomendado_v1": True,
     })
 
+
+def _ajuda_configuracao(chave: str, texto: str) -> None:
+    """Alterna dicas contextuais sem ocupar espaço quando não solicitadas."""
+    estado = f"ajuda_config_{chave}"
+    rotulo = "Ocultar explicação" if st.session_state.get(estado) else "Explicar configurações"
+    if st.button(rotulo, key=f"botao_{estado}", use_container_width=True):
+        st.session_state[estado] = not st.session_state.get(estado, False)
+    if st.session_state.get(estado):
+        st.info(texto)
+
 with st.sidebar:
     pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
     st.header("1. Entrada de dados")
@@ -1445,6 +1455,13 @@ if pagina_sidebar == "Configurações":
     ])
 
     with aba_processo_cfg:
+        _ajuda_configuracao(
+            "processo",
+            "**Vincular ingestão em** define onde o lote será registrado. Use **Novo processo** "
+            "para uma nova cotação; use **Processo existente** para acrescentar arquivos e manter "
+            "fornecedores, histórico e consumo reunidos. A detecção automática aproveita assunto e "
+            "corpo dos e-mails para identificar o número do processo; mantenha-a ativa para pacotes .eml.",
+        )
         processos_cfg = process_db.listar_processos(
             process_db.get_connection(st.session_state.cfg_process_db_path)
         )
@@ -1468,6 +1485,14 @@ if pagina_sidebar == "Configurações":
         )
 
     with aba_ia_cfg:
+        _ajuda_configuracao(
+            "ia",
+            "O **modelo principal** extrai itens, classifica e-mails e julga pares ambíguos; o **modelo forte** "
+            "é chamado automaticamente apenas quando a extração falha. Mantenha **IA juiz** ativa para reduzir "
+            "casamentos incorretos na zona cinzenta. A classificação por IA só entra quando as regras locais não "
+            "conseguem decidir. Salvar e processar anexos preserva rastreabilidade e permite tratar propostas "
+            "recebidas dentro de e-mails compactados.",
+        )
         st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
         st.checkbox("IA juiz: decidir casamentos na zona cinzenta (score 60-84)", key="cfg_usar_ia_juiz")
@@ -1476,6 +1501,13 @@ if pagina_sidebar == "Configurações":
         st.checkbox("Processar anexos de e-mail como orçamento quando suportados", key="cfg_processar_orcamentos_de_anexos")
 
     with aba_regras_cfg:
+        _ajuda_configuracao(
+            "regras",
+            "**85/40** é o equilíbrio recomendado: acima de 85 o parser estrutural é confiável; abaixo de 40 a IA "
+            "assume a decisão; entre esses valores ocorre dupla checagem. A sensibilidade de casamento em **85** "
+            "evita unir descrições apenas parecidas. Pré-filtrar reduz ruído e custo. Bloquear descrições divergentes, "
+            "comparar UF e validar quantidade protege contra itens com o mesmo número, mas especificações incompatíveis.",
+        )
         st.slider("Limiar de confiança alta (PDF estrutural)", 60, 100, key="cfg_limiar_confianca_alta")
         st.slider("Limiar de confiança baixa (PDF estrutural)", 0, 60, key="cfg_limiar_confianca_baixa")
         st.slider("Sensibilidade do casamento por descrição", 70, 100, key="cfg_fuzzy_threshold")
@@ -1486,11 +1518,24 @@ if pagina_sidebar == "Configurações":
         st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
 
     with aba_mapa_cfg:
+        _ajuda_configuracao(
+            "lista_mestre",
+            "A lista mestra enviada no sidebar tem prioridade e fixa a nomenclatura oficial. Sem ela, a geração por "
+            "consenso cria referências apenas quando pelo menos **3** orçamentos concordam com similaridade de **80**. "
+            "Esses valores evitam consolidar cedo demais itens com descrições diferentes; aumente-os quando a documentação "
+            "for heterogênea e reduza-os somente em lotes pequenos com descrições muito consistentes.",
+        )
         st.checkbox("Gerar lista mestra automática por consenso", key="cfg_gerar_master_auto")
         st.number_input("Mínimo de orçamentos concordando", min_value=2, max_value=10, key="cfg_min_agree")
         st.slider("Confiança mínima do consenso", min_value=60, max_value=100, key="cfg_consensus_threshold")
 
     with aba_administracao:
+        _ajuda_configuracao(
+            "administracao",
+            "A chave OpenRouter é usada exclusivamente nas chamadas de IA. Ela fica no arquivo local de configuração; "
+            "a senha protege o acesso pela interface, mas não substitui as permissões do servidor. Os modelos são fixos "
+            "para manter previsibilidade: Qwen atende o fluxo normal e GPT-5.6 Luna atende o escalonamento automático.",
+        )
         _cfg = app_config.carregar_config()
         st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
