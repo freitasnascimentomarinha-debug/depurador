@@ -886,8 +886,12 @@ def comparar_extracoes(itens_parser: list[dict], itens_ia: list[dict]):
         p_unit = parser_item.get("preco_unitario")
         i_unit = ia_item.get("preco_unitario")
         numerico_bate = False
-        if p_unit is not None and i_unit is not None and max(abs(p_unit), abs(i_unit), 1e-9) > 0:
-            numerico_bate = abs(p_unit - i_unit) / max(abs(p_unit), abs(i_unit)) < 0.01
+        if p_unit is not None and i_unit is not None:
+            maior_valor = max(abs(p_unit), abs(i_unit))
+            if maior_valor == 0:
+                numerico_bate = True
+            else:
+                numerico_bate = abs(p_unit - i_unit) / maior_valor < 0.01
 
         itens_finais.append(_mesclar_item(parser_item, ia_item, score, numerico_bate))
 

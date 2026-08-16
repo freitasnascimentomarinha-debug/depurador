@@ -1733,15 +1733,82 @@ if processar:
     with aba_pipeline:
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
-                log_expander = st.expander("Logs de processamento", expanded=True)
+                pipeline_started_at = time.perf_counter()
+                pipeline_progress = st.progress(0, text="Preparando pipeline... 0%")
+                pipeline_metrics = st.empty()
+                current_stage_placeholder = st.empty()
+                log_expander = st.expander("Timeline de processamento", expanded=True)
                 log_placeholder = log_expander.empty()
                 log_lines: list[str] = []
+                pipeline_state = {"fraction": 0.0, "stage": "Inicialização"}
+
+                def _log_style(msg: str) -> tuple[str, str]:
+                    lower = msg.lower()
+                    if any(k in lower for k in ("erro", "falha", "exceção", "exception")):
+                        return "#ff5c5c", "ERRO"
+                    if any(k in lower for k in ("openrouter", "modelo ia", "ia juiz", "chamada ia")):
+                        return "#8ab4ff", "OPENROUTER"
+                    if any(k in lower for k in ("ocr", "visão", "visao", "pdftotext", "parser", "estrutural")):
+                        return "#c792ea", "LEITURA"
+                    if any(k in lower for k in ("processando", "processamento", "extraindo", "iniciando")):
+                        return "#55d6be", "EM ANDAMENTO"
+                    if any(k in lower for k in ("mapa", "comparativ", "lista mestra", "relatório", "relatorio")):
+                        return "#ffd166", "CONSOLIDAÇÃO"
+                    if any(k in lower for k in ("template", "ignorado", "duplicado", "cache")):
+                        return "#aab4c3", "FILTRO"
+                    return "#d7dee9", "EVENTO"
+
+                def _set_pipeline_progress(fraction: float, stage: str):
+                    pipeline_state["fraction"] = max(0.0, min(1.0, fraction))
+                    pipeline_state["stage"] = stage
+                    elapsed = time.perf_counter() - pipeline_started_at
+                    pipeline_progress.progress(
+                        pipeline_state["fraction"],
+                        text=f"{pipeline_state['fraction'] * 100:05.1f}%  •  {stage}",
+                    )
+                    current_stage_placeholder.markdown(
+                        f"<div style='padding:8px 12px;border-left:4px solid #55d6be;"
+                        f"background:#102a2b;color:#d7fff5;border-radius:4px;'>"
+                        f"<b>Etapa atual</b>&nbsp;&nbsp; {html.escape(stage)}"
+                        f"<span style='float:right;color:#9fb8b5;'>tempo decorrido: {elapsed:.1f}s</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                    pipeline_metrics.markdown(
+                        f"<div style='display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 12px;'>"
+                        f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
+                        f"<b>{pipeline_state['fraction'] * 100:.1f}%</b> concluído</span>"
+                        f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
+                        f"<b>{elapsed:.1f}s</b> decorridos</span>"
+                        f"<span style='background:#172033;padding:7px 12px;border-radius:5px;'>"
+                        f"<b>{len(log_lines)}</b> eventos</span></div>",
+                        unsafe_allow_html=True,
+                    )
 
                 def add_log(msg: str):
                     stamp = time.strftime("%H:%M:%S")
+                    elapsed = time.perf_counter() - pipeline_started_at
+                    color, label = _log_style(msg)
                     log_lines.append(f"[{stamp}] {msg}")
-                    log_placeholder.code("\n".join(log_lines[-300:]), language="text")
+                    rendered = []
+                    for line in log_lines[-120:]:
+                        raw = line[11:] if len(line) > 11 else line
+                        line_color, line_label = _log_style(raw)
+                        rendered.append(
+                            f"<div style='border-bottom:1px solid #263143;padding:5px 2px;line-height:1.35;'>"
+                            f"<span style='color:#7f8da3;font-family:monospace;font-size:0.82em;'>{html.escape(line[:10])}</span> "
+                            f"<span style='color:{line_color};font-size:0.72em;font-weight:700;letter-spacing:.04em;'>"
+                            f"{line_label}</span> <span style='color:#e6edf5;'>{html.escape(raw)}</span></div>"
+                        )
+                    log_placeholder.markdown(
+                        "<div style='background:#0c111b;border:1px solid #263143;border-radius:6px;"
+                        "padding:8px 12px;max-height:520px;overflow-y:auto;font-size:0.9em;'>"
+                        + "".join(rendered)
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    _set_pipeline_progress(pipeline_state["fraction"], pipeline_state["stage"])
 
+                _set_pipeline_progress(0.02, "Inicialização do pipeline")
                 add_log("Iniciando pipeline integrado.")
 
                 # -----------------------------------------------------------
@@ -1857,6 +1924,7 @@ if processar:
                     f"Entrada consolidada: {len(eml_entries)} e-mail(s) e "
                     f"{len(budget_candidates)} arquivo(s) de orçamento."
                 )
+                _set_pipeline_progress(0.12, "Entradas consolidadas")
 
                 # -----------------------------------------------------------
                 # 2) Resolve processo para persistir e-mails
@@ -1906,6 +1974,7 @@ if processar:
                 anexos_orc_hashes: set[tuple[str, str]] = set()
 
                 if eml_entries:
+                    _set_pipeline_progress(0.16, "Lendo e classificando e-mails")
                     add_log("Iniciando processamento de e-mails.")
 
                     # --- Pré-passagem: hashes dos anexos institucionais -------
@@ -2001,7 +2070,15 @@ if processar:
                             )
                         else:
                             if classificar_emails_com_ia:
+                                add_log(
+                                    f"OpenRouter: classificando e-mail com modelo principal {model}."
+                                )
                                 clf = email_classifier.classificar_email(parsed, api_key, model)
+                                if clf.get("uso_ia"):
+                                    add_log(
+                                        f"OpenRouter: classificação concluída ({clf.get('tipo') or 'outro'}, "
+                                        f"confiança {int(clf.get('confianca') or 0)}%)."
+                                    )
                             else:
                                 tipo_heur = email_classifier._heuristica(parsed) or "outro"
                                 clf = {
@@ -2205,6 +2282,7 @@ if processar:
                     n_cnpjs_backfill = _atualizar_cnpjs_fornecedores_compat(conn_proc, processo_id)
                     if n_cnpjs_backfill:
                         add_log(f"CNPJ atualizado em fornecedores já cadastrados: {n_cnpjs_backfill} fornecedor(es).")
+                _set_pipeline_progress(0.35, "E-mails e anexos catalogados")
 
                 # -----------------------------------------------------------
                 # 4) Processa arquivos de orçamento
@@ -2227,11 +2305,25 @@ if processar:
                 custo_estimado = False
                 n_fornecedores_enriquecidos_por_orc = 0
 
-                progress = st.progress(0)
                 status = st.empty()
 
                 for i, f in enumerate(budget_candidates):
-                    status.text(f"Processando orçamento {i + 1}/{len(budget_candidates)}: {f['name']}")
+                    fornecedor_atual = (
+                        f.get("fornecedor_nome_hint")
+                        or f.get("fornecedor_email_hint")
+                        or f.get("origem")
+                        or "fornecedor desconhecido"
+                    )
+                    percentual_orcamento = 0.35 + (0.55 * (i / max(1, len(budget_candidates))))
+                    _set_pipeline_progress(
+                        percentual_orcamento,
+                        f"Orçamento {i + 1}/{len(budget_candidates)} • {fornecedor_atual}",
+                    )
+                    status.markdown(
+                        f"**Fornecedor atual:** `{html.escape(str(fornecedor_atual))}`  \n"
+                        f"**Arquivo:** `{html.escape(str(f['name']))}`",
+                        unsafe_allow_html=True,
+                    )
                     # Mostra remetente quando disponível para facilitar rastreabilidade
                     fornecedor_email_hint = (f.get("fornecedor_email_hint") or "").strip().lower()
                     remetente_info = fornecedor_email_hint or f.get("origem") or "desconhecido"
@@ -2297,10 +2389,17 @@ if processar:
                                 "descricao": item.get("descricao"),
                             })
                         n_budget_cache += 1
-                        progress.progress((i + 1) / max(1, len(budget_candidates)))
+                        _set_pipeline_progress(
+                            0.35 + (0.55 * ((i + 1) / max(1, len(budget_candidates)))),
+                            f"Orçamento {i + 1}/{len(budget_candidates)} recuperado do cache • {fornecedor_atual}",
+                        )
                         continue
 
                     try:
+                        add_log(
+                            f"OpenRouter: enviando conteúdo do orçamento de {fornecedor_atual} "
+                            f"para o modelo principal {model}."
+                        )
                         result = extrair_orcamento_em_camadas(
                             path=f["path"],
                             api_key=api_key,
@@ -2310,9 +2409,24 @@ if processar:
                             limiar_baixo=int(limiar_confianca_baixa),
                             lista_referencia=lista_referencia_extracao,
                         )
+                        add_log(
+                            f"Leitura concluída: técnica={result.get('fonte_processamento', 'ia')}, "
+                            f"itens={len(result.get('itens') or [])}, "
+                            f"confiança estrutural={result.get('confianca_estrutural', 'n/a')}."
+                        )
+                        if result.get("escalado_para"):
+                            add_log(
+                                f"OpenRouter: extração escalada para o modelo {result['escalado_para']} "
+                                "após resposta insuficiente do modelo principal."
+                            )
+                        for evento in (result.get("debug_events") or [])[-8:]:
+                            add_log(f"Técnica: {evento}")
                         if result.get("erro") and not result.get("itens"):
                             falhas.append(f"{f['name']}: {result['erro']}")
-                            progress.progress((i + 1) / max(1, len(budget_candidates)))
+                            _set_pipeline_progress(
+                                0.35 + (0.55 * ((i + 1) / max(1, len(budget_candidates)))),
+                                f"Orçamento {i + 1}/{len(budget_candidates)} com alerta • {fornecedor_atual}",
+                            )
                             continue
 
                         empresa = result.get("empresa") or os.path.splitext(os.path.basename(f["name"]))[0]
@@ -2391,7 +2505,10 @@ if processar:
                         add_log(f"ERRO ao processar {f['name']}: {exc}")
                         add_log(traceback.format_exc())
 
-                    progress.progress((i + 1) / max(1, len(budget_candidates)))
+                    _set_pipeline_progress(
+                        0.35 + (0.55 * ((i + 1) / max(1, len(budget_candidates)))),
+                        f"Orçamento {i + 1}/{len(budget_candidates)} concluído • {fornecedor_atual}",
+                    )
 
                 # -----------------------------------------------------------
                 # 5) Gera mapa comparativo (se houver orçamentos)
@@ -2403,6 +2520,8 @@ if processar:
                 empresas = []
 
                 if all_extractions:
+                    _set_pipeline_progress(0.92, "Montando mapa comparativo e consolidando itens")
+                    add_log("Iniciando consolidação: número do item, PI, descrição, UF e preços unitários.")
                     if master_items is None and gerar_master_auto:
                         auto_master = build_master_from_consensus(
                             all_extractions,
@@ -2437,6 +2556,7 @@ if processar:
                     # --- IA juiz: zona cinzenta do casamento -----------------
                     usar_ia_juiz = bool(st.session_state.get("cfg_usar_ia_juiz", True))
                     if usar_ia_juiz and api_key:
+                        add_log(f"OpenRouter: acionando IA juiz ({ai_judge.DEFAULT_JUDGE_MODEL}) para a zona cinzenta do matching.")
                         pares_cinzentos = encontrar_pares_zona_cinzenta(
                             rows, matrix,
                             fuzzy_threshold=int(fuzzy_threshold),
@@ -2503,9 +2623,13 @@ if processar:
                 if processo_id:
                     st.session_state.selected_processo_view_id = processo_id
 
+                _set_pipeline_progress(0.98, "Relatórios e mapa preparados")
+                add_log("Marco final: mapa comparativo, revisão e relatórios preparados para exibição.")
+
                 # -----------------------------------------------------------
                 # 6) Resumo da execução
                 # -----------------------------------------------------------
+                _set_pipeline_progress(1.0, "Processamento concluído")
                 st.success("Processamento concluído.")
                 c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("E-mails novos", n_emails_novos)
