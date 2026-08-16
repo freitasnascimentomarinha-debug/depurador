@@ -1388,6 +1388,25 @@ if "cfg_consensus_threshold" not in st.session_state:
     st.session_state.cfg_consensus_threshold = 80
 if "master_file_upload" not in st.session_state:
     st.session_state.master_file_upload = None
+if not st.session_state.get("cfg_perfil_recomendado_v1"):
+    st.session_state.update({
+        "cfg_usar_ia_juiz": True,
+        "cfg_classificar_emails_com_ia": True,
+        "cfg_salvar_binario_anexos": True,
+        "cfg_processar_orcamentos_de_anexos": True,
+        "cfg_limiar_confianca_alta": 85,
+        "cfg_limiar_confianca_baixa": 40,
+        "cfg_fuzzy_threshold": 85,
+        "cfg_pre_filtrar": True,
+        "cfg_sanity_threshold": 50,
+        "cfg_bloquear_numero_incoerente": True,
+        "cfg_usar_uf_casamento": True,
+        "cfg_usar_qtd_casamento": True,
+        "cfg_gerar_master_auto": True,
+        "cfg_min_agree": 3,
+        "cfg_consensus_threshold": 80,
+        "cfg_perfil_recomendado_v1": True,
+    })
 
 with st.sidebar:
     pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
@@ -1421,16 +1440,11 @@ if pagina_sidebar == "Configurações":
         "Processo",
         "IA e classificação",
         "Regras de extração/comparação",
-        "Mapa comparativo",
+        "Lista mestre",
         "Administração",
     ])
 
     with aba_processo_cfg:
-        st.session_state.cfg_process_db_path = st.text_input(
-            "Banco de processos/emails",
-            value=st.session_state.cfg_process_db_path,
-            key="process_db_path_input_config",
-        )
         processos_cfg = process_db.listar_processos(
             process_db.get_connection(st.session_state.cfg_process_db_path)
         )
@@ -1448,7 +1462,6 @@ if pagina_sidebar == "Configurações":
             st.session_state.selected_processo_view_id = st.session_state.processo_existente_id
         else:
             st.session_state.processo_existente_id = None
-            st.session_state.processo_numero_novo = st.text_input("Numero do processo (opcional)")
             st.session_state.processo_titulo_novo = st.text_input("Titulo/descricao do processo")
         st.session_state.auto_detectar_processo = st.checkbox(
             "Auto detectar numero do processo pelo assunto dos e-mails", value=True
