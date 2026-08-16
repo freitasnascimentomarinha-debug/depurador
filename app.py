@@ -1942,6 +1942,12 @@ if processar:
 
                         tipo_email = clf.get("tipo") or "outro"
 
+                        if tipo_email == "orcamento_recebido" and not parsed.get("anexos"):
+                            add_log(
+                                f"Aviso: e-mail de '{rem_email or rem_nome}' classificado como Orçamento "
+                                f"Recebido, mas o .eml não trouxe nenhum anexo detectado."
+                            )
+
                         # Anexos binários no banco
                         melhor_anexo = None
                         melhor_pontuacao = -10_000
@@ -2084,7 +2090,12 @@ if processar:
                     f"E-mails: {n_emails_novos} novo(s), {n_emails_dup} duplicado(s), "
                     f"{n_emails_ia} com IA."
                 )
-                if processar_orcamentos_de_anexos and n_anexos_total:
+                if not processar_orcamentos_de_anexos:
+                    add_log(
+                        f"Anexos de e-mail: processamento DESLIGADO na barra lateral "
+                        f"({n_anexos_total} anexo(s) encontrado(s) nos .eml, mas não avaliados)."
+                    )
+                else:
                     add_log(
                         "Anexos de e-mail: "
                         f"{n_anexos_total} total, "
