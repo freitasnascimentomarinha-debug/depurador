@@ -1299,10 +1299,7 @@ def _build_report_pdf(processo: dict, resumo: dict) -> bytes:
 
 st.set_page_config(page_title="Depurador de Orçamentos", page_icon="🤖", layout="wide")
 st.title("🤖 Depurador de Orçamentos")
-st.caption(
-    "Sistema unificado para ingestão e depuração de orçamentos e e-mails de fornecedores "
-    "(PDF/Word/Excel/CSV/ZIP/TGZ com .eml), com organização por processo e fornecedores."
-)
+st.caption("Sistema para ingestão e depuração de orçamentos vindos de e-mails de fornecedores para confecção de Relatório de Pesquisa de Preços e Mapa Comparativo.")
 
 if IMPORT_ERROR is not None:
     st.error("Falha ao iniciar o app por erro de importação.")
@@ -1515,13 +1512,6 @@ if pagina_sidebar == "Configurações":
     with aba_administracao:
         st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
-        if api_key:
-            st.success("Chave OpenRouter carregada via secrets.")
-        else:
-            st.warning(
-                "Chave OpenRouter ausente. Defina OPENROUTER_API_KEY em "
-                ".streamlit/secrets.toml (ou nos Secrets do Streamlit Cloud)."
-            )
 
         st.divider()
         st.write("Cache de orçamentos e manutenção do processo selecionado")
@@ -1614,13 +1604,18 @@ forcar_reprocessamento = bool(st.session_state.forcar_reprocessamento)
 
 conteudo_aplicacao = st.container()
 with conteudo_aplicacao:
-    aba_pipeline, aba_emails, aba_relatorio, aba_fornecedores, aba_mapa = st.tabs([
+    abas_aplicacao = st.tabs([
         "Pipeline",
         "Emails do Processo",
         "Relatório do Processo",
         "Fornecedores",
         "Mapa Comparativo",
     ])
+aba_pipeline = abas_aplicacao[0]
+aba_emails = abas_aplicacao[1]
+aba_relatorio = abas_aplicacao[2]
+aba_fornecedores = abas_aplicacao[3]
+aba_mapa = abas_aplicacao[4]
 
 processos_view = process_db.listar_processos(conn_proc)
 if processos_view:
