@@ -1384,31 +1384,14 @@ if "cfg_process_db_path" not in st.session_state:
 with st.sidebar:
     pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
     st.header("1. Entrada de dados")
-    modo_entrada = st.radio(
-        "Origem dos arquivos",
-        ["Upload", "Pasta local"],
-        help=(
-            "Upload: envie arquivos avulsos e/ou pacotes ZIP/TGZ. "
-            "Pasta local: informa um diretório contendo esses arquivos."
-        ),
-    )
-
-    uploaded_files = None
+    modo_entrada = "Upload"
     local_folder = None
-    if modo_entrada == "Upload":
-        uploaded_files = st.file_uploader(
-            "Arquivos de entrada",
-            type=[
-                "pdf", "docx", "doc", "xlsx", "xls", "csv", "zip", "tgz", "gz",
-            ],
-            accept_multiple_files=True,
-            help="Você pode enviar arquivos avulsos e arquivos compactados com .eml.",
-        )
-    else:
-        local_folder = st.text_input(
-            "Caminho da pasta",
-            placeholder=r"Ex: /home/voce/entrada_orcamentos",
-        )
+    uploaded_files = st.file_uploader(
+        "Arquivos de entrada",
+        type=["pdf", "docx", "doc", "xlsx", "xls", "csv", "zip", "tgz", "gz"],
+        accept_multiple_files=True,
+        help="Envie arquivos avulsos e arquivos compactados com .eml.",
+    )
 
     st.header("2. Mapa comparativo")
     st.caption("Lista mestra opcional: colunas ITEM e NOMENCLATURA")
@@ -1446,13 +1429,15 @@ usar_qtd_casamento = bool(st.session_state.cfg_usar_qtd_casamento)
 budget_db_path = st.session_state.budget_db_path
 forcar_reprocessamento = bool(st.session_state.forcar_reprocessamento)
 
-aba_pipeline, aba_emails, aba_relatorio, aba_fornecedores, aba_mapa = st.tabs([
-    "Pipeline",
-    "Emails do Processo",
-    "Relatório do Processo",
-    "Fornecedores",
-    "Mapa Comparativo",
-])
+conteudo_aplicacao = st.container()
+with conteudo_aplicacao:
+    aba_pipeline, aba_emails, aba_relatorio, aba_fornecedores, aba_mapa = st.tabs([
+        "Pipeline",
+        "Emails do Processo",
+        "Relatório do Processo",
+        "Fornecedores",
+        "Mapa Comparativo",
+    ])
 
 processos_view = process_db.listar_processos(conn_proc)
 if processos_view:
@@ -2791,6 +2776,7 @@ with aba_mapa:
 
 
 if pagina_sidebar == "Configurações":
+    conteudo_aplicacao.empty()
     st.subheader("Configurações")
     aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_administracao = st.tabs([
         "Processo",
