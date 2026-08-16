@@ -413,6 +413,11 @@ def extrair_xlsx_estruturado(path: str) -> list[dict] | None:
                 "fonte_extracao": "estrutural",
                 "origem": f"{nome_aba}!{ridx + 1}",
             }
+            # No modelo enviado pela Marinha, a linha continua na planilha
+            # quando o fornecedor não a cotou. Ela não deve entrar como item
+            # orçado nem criar uma falsa presença de preço no mapa.
+            if item["preco_unitario"] is None and item["preco_total"] is None:
+                continue
             itens.append(normalizar_item(item))
 
     itens = _deduplicar_por_numero_item(itens)

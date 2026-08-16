@@ -12,6 +12,19 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
+_DOMINIOS_INTERNOS = ("@marinha.mil.br", "@mil.br")
+_EMAILS_INTERNOS = {"sobressalentes.comrj@gmail.com", "asana.com"}
+
+
+def _email_interno(email: str | None) -> bool:
+    valor = (email or "").strip().lower()
+    return bool(
+        valor.endswith(_DOMINIOS_INTERNOS)
+        or valor in _EMAILS_INTERNOS
+        or any(valor.endswith("@" + dominio) for dominio in _EMAILS_INTERNOS)
+    )
+
+
 GENERIC_EMAIL_DOMAINS = {
     "gmail.com", "hotmail.com", "outlook.com", "live.com", "msn.com",
     "yahoo.com", "yahoo.com.br", "icloud.com", "me.com", "aol.com",
@@ -657,6 +670,8 @@ def listar_fornecedores(conn: sqlite3.Connection) -> list[dict]:
     result = []
     for r in rows:
         d = dict(r)
+        if _email_interno(d.get("email")):
+            continue
         d["nome"] = nome_fornecedor_preferencial(d.get("email", ""), d.get("nome", ""))
         result.append(d)
     return result
@@ -688,6 +703,8 @@ def listar_fornecedores_processo(conn: sqlite3.Connection, processo_id: int) -> 
     result = []
     for r in rows:
         d = dict(r)
+        if _email_interno(d.get("email")):
+            continue
         d["nome"] = nome_fornecedor_preferencial(d.get("email", ""), d.get("nome", ""))
         result.append(d)
     return result

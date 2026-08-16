@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-EXTRACTION_VERSION = "5"
+EXTRACTION_VERSION = "6"
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:

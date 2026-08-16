@@ -205,6 +205,22 @@ def _leitura_efetiva(participacao: dict) -> bool:
     )
 
 
+_EMAILS_INTERNOS = {
+    "sobressalentes.comrj@gmail.com",
+    "asana.com",
+}
+
+
+def _email_interno(email: str) -> bool:
+    """Identifica remetentes do órgão/ferramentas internas que não são fornecedores."""
+    valor = (email or "").strip().lower()
+    return bool(
+        valor.endswith("@marinha.mil.br")
+        or valor.endswith("@mil.br")
+        or any(valor == item or valor.endswith("@" + item) for item in _EMAILS_INTERNOS)
+    )
+
+
 def _norm_header(texto) -> str:
     if texto is None:
         return ""
@@ -858,6 +874,8 @@ def _itens_orcados_por_fornecedor(conn_proc, conn_budget, processo_id: int) -> d
     regs_sem_email: list[dict] = []
     for reg in regs:
         remetente = (reg.get("remetente_email") or "").strip().lower()
+        if _email_interno(remetente):
+            continue
         if not remetente:
             regs_sem_email.append(reg)
             continue
@@ -1422,12 +1440,8 @@ if "cfg_pre_filtrar" not in st.session_state:
     st.session_state.cfg_pre_filtrar = True
 if "cfg_sanity_threshold" not in st.session_state:
     st.session_state.cfg_sanity_threshold = 50
-if "cfg_bloquear_numero_incoerente" not in st.session_state:
-    st.session_state.cfg_bloquear_numero_incoerente = True
 if "cfg_usar_uf_casamento" not in st.session_state:
     st.session_state.cfg_usar_uf_casamento = True
-if "cfg_usar_qtd_casamento" not in st.session_state:
-    st.session_state.cfg_usar_qtd_casamento = True
 if "cfg_process_db_path" not in st.session_state:
     st.session_state.cfg_process_db_path = _default_process_db_path()
 if "cfg_gerar_master_auto" not in st.session_state:
@@ -1449,9 +1463,7 @@ _PERFIL_RECOMENDADO = {
     "cfg_fuzzy_threshold": 85,
     "cfg_pre_filtrar": True,
     "cfg_sanity_threshold": 50,
-    "cfg_bloquear_numero_incoerente": True,
     "cfg_usar_uf_casamento": True,
-    "cfg_usar_qtd_casamento": True,
     "cfg_gerar_master_auto": True,
     "cfg_min_agree": 3,
     "cfg_consensus_threshold": 80,
@@ -1553,9 +1565,7 @@ if pagina_sidebar == "Configurações":
         st.slider("Sensibilidade do casamento por descrição", 70, 100, key="cfg_fuzzy_threshold", help="Maior valor exige descrições mais parecidas antes de unir itens. Recomendado: 85.")
         st.checkbox("Pré-filtrar texto antes de enviar à IA", key="cfg_pre_filtrar", help="Remove cabeçalhos e textos repetitivos, reduzindo ruído e custo de IA.")
         st.slider("Alerta número igual x descrição divergente", 0, 80, key="cfg_sanity_threshold", help="Sinaliza itens com mesmo número e descrições incompatíveis. Recomendado: 50.")
-        st.checkbox("Bloquear casamento automático quando número bate e descrição diverge", key="cfg_bloquear_numero_incoerente", help="Evita fundir itens de mesmo número quando a descrição indica produtos diferentes.")
         st.checkbox("Usar UF na identificação dos itens", key="cfg_usar_uf_casamento", help="Impede casar unidades incompatíveis, como PCT e KG.")
-        st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento", help="Sinaliza quantidades muito divergentes para revisão.")
 
     with aba_mapa_cfg:
         st.checkbox("Gerar lista mestra automática por consenso", key="cfg_gerar_master_auto", help="Cria referências quando não há planilha mestra enviada no sidebar.")
@@ -1648,9 +1658,11 @@ limiar_confianca_baixa = int(st.session_state.cfg_limiar_confianca_baixa)
 fuzzy_threshold = int(st.session_state.cfg_fuzzy_threshold)
 pre_filtrar = bool(st.session_state.cfg_pre_filtrar)
 sanity_threshold = int(st.session_state.cfg_sanity_threshold)
-bloquear_numero_incoerente = bool(st.session_state.cfg_bloquear_numero_incoerente)
 usar_uf_casamento = bool(st.session_state.cfg_usar_uf_casamento)
-usar_qtd_casamento = bool(st.session_state.cfg_usar_qtd_casamento)
+
+# Regras removidas da interface: o comportamento oficial é sempre permissivo.
+usar_qtd_casamento = False
+bloquear_numero_incoerente = False
 
 budget_db_path = st.session_state.budget_db_path
 forcar_reprocessamento = bool(st.session_state.forcar_reprocessamento)
@@ -2216,7 +2228,7 @@ if processar:
                             )
                             if data_pedido_hist:
                                 n_pedidos_inferidos += 1
-                        if rem_email:
+                        if rem_email and not _email_interno(rem_email):
                             if rem_cnpj:
                                 n_cnpjs_identificados += 1
                             if rem_telefone:
@@ -2348,7 +2360,11 @@ if processar:
                         and cached.get("extraction_version") == db_utils.EXTRACTION_VERSION
                     ):
                         itens = db_utils.get_items_for_file(conn_budget, file_id)
-                        empresa = cached["empresa"]
+                        empresa = (
+                            f.get("fornecedor_nome_hint")
+                            or f.get("fornecedor_email_hint")
+                            or cached["empresa"]
+                        )
                         cnpj_orc = (cached.get("cnpj") or "").strip()
                         telefone_orc = (cached.get("telefone") or "").strip()
                         fornecedor_email_hint = (f.get("fornecedor_email_hint") or "").strip().lower()
@@ -2429,7 +2445,12 @@ if processar:
                             )
                             continue
 
-                        empresa = result.get("empresa") or os.path.splitext(os.path.basename(f["name"]))[0]
+                        empresa = (
+                            f.get("fornecedor_nome_hint")
+                            or f.get("fornecedor_email_hint")
+                            or result.get("empresa")
+                            or os.path.splitext(os.path.basename(f["name"]))[0]
+                        )
                         cnpj_orc = (result.get("cnpj") or "").strip()
                         telefone_orc = (result.get("telefone") or "").strip()
                         itens = result.get("itens", [])
@@ -2546,8 +2567,8 @@ if processar:
                         fuzzy_threshold=int(fuzzy_threshold),
                         sanity_threshold=int(sanity_threshold),
                         usar_uf=bool(usar_uf_casamento),
-                        usar_qtd=bool(usar_qtd_casamento),
-                        bloquear_numero_incoerente=bool(bloquear_numero_incoerente),
+                        usar_qtd=False,
+                        bloquear_numero_incoerente=False,
                         correcoes=correcoes_salvas,
                     )
                     review.extend(review_extracao)
@@ -2816,8 +2837,8 @@ with aba_relatorio:
                 fuzzy_threshold,
                 sanity_threshold,
                 usar_uf_casamento,
-                usar_qtd_casamento,
-                bloquear_numero_incoerente,
+                False,
+                False,
                 gerar_master_auto,
                 min_agree,
                 consensus_threshold,
@@ -3088,8 +3109,8 @@ with aba_mapa:
             fuzzy_threshold,
             sanity_threshold,
             usar_uf_casamento,
-            usar_qtd_casamento,
-            bloquear_numero_incoerente,
+            False,
+            False,
             gerar_master_auto,
             min_agree,
             consensus_threshold,
