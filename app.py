@@ -1380,6 +1380,14 @@ if "cfg_usar_qtd_casamento" not in st.session_state:
     st.session_state.cfg_usar_qtd_casamento = True
 if "cfg_process_db_path" not in st.session_state:
     st.session_state.cfg_process_db_path = _default_process_db_path()
+if "cfg_gerar_master_auto" not in st.session_state:
+    st.session_state.cfg_gerar_master_auto = True
+if "cfg_min_agree" not in st.session_state:
+    st.session_state.cfg_min_agree = 3
+if "cfg_consensus_threshold" not in st.session_state:
+    st.session_state.cfg_consensus_threshold = 80
+if "master_file_upload" not in st.session_state:
+    st.session_state.master_file_upload = None
 
 with st.sidebar:
     pagina_sidebar = st.radio("Navegação", ["Aplicação", "Configurações"], key="pagina_sidebar")
@@ -1393,22 +1401,16 @@ with st.sidebar:
         help="Envie arquivos avulsos e arquivos compactados com .eml.",
     )
 
-    st.header("2. Mapa comparativo")
-    st.caption("Lista mestra opcional: colunas ITEM e NOMENCLATURA")
-    master_file = st.file_uploader("Lista mestra", type=["xls", "xlsx", "csv"], label_visibility="collapsed")
-    gerar_master_auto = st.checkbox("Gerar lista mestra automática por consenso", value=True)
-    min_agree = st.number_input("Mínimo de orçamentos concordando", min_value=2, max_value=10, value=3)
-    consensus_threshold = st.slider("Confiança mínima do consenso", min_value=60, max_value=100, value=80)
-
     processar = st.button("🚀 Processar ingestão completa", type="primary", use_container_width=True)
 
 
 if pagina_sidebar == "Configurações":
     st.subheader("Configurações")
-    aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_administracao = st.tabs([
+    aba_processo_cfg, aba_ia_cfg, aba_regras_cfg, aba_mapa_cfg, aba_administracao = st.tabs([
         "Processo",
         "IA e classificação",
         "Regras de extração/comparação",
+        "Mapa comparativo",
         "Administração",
     ])
 
@@ -1459,6 +1461,15 @@ if pagina_sidebar == "Configurações":
         st.checkbox("Usar UF na identificação dos itens", key="cfg_usar_uf_casamento")
         st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
 
+    with aba_mapa_cfg:
+        st.caption("Lista mestra opcional: colunas ITEM e NOMENCLATURA")
+        master_file_cfg = st.file_uploader("Lista mestra", type=["xls", "xlsx", "csv"], key="master_file_widget")
+        if master_file_cfg is not None:
+            st.session_state.master_file_upload = master_file_cfg
+        st.checkbox("Gerar lista mestra automática por consenso", key="cfg_gerar_master_auto")
+        st.number_input("Mínimo de orçamentos concordando", min_value=2, max_value=10, key="cfg_min_agree")
+        st.slider("Confiança mínima do consenso", min_value=60, max_value=100, key="cfg_consensus_threshold")
+
     with aba_administracao:
         _cfg = app_config.carregar_config()
         st.caption("Modelo principal: qwen/qwen3.5-flash-02-23")
@@ -1489,6 +1500,10 @@ processo_existente_id = st.session_state.get("processo_existente_id")
 processo_numero_novo = st.session_state.get("processo_numero_novo", "")
 processo_titulo_novo = st.session_state.get("processo_titulo_novo", "")
 auto_detectar_processo = bool(st.session_state.get("auto_detectar_processo", True))
+master_file = st.session_state.master_file_upload
+gerar_master_auto = bool(st.session_state.cfg_gerar_master_auto)
+min_agree = int(st.session_state.cfg_min_agree)
+consensus_threshold = int(st.session_state.cfg_consensus_threshold)
 model = st.session_state.cfg_model
 classificar_emails_com_ia = bool(st.session_state.cfg_classificar_emails_com_ia)
 salvar_binario_anexos = bool(st.session_state.cfg_salvar_binario_anexos)
