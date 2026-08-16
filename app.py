@@ -1401,6 +1401,17 @@ with st.sidebar:
         help="Envie arquivos avulsos e arquivos compactados com .eml.",
     )
 
+    st.header("2. Lista mestra")
+    st.caption("Opcional: colunas ITEM e NOMENCLATURA")
+    master_file_sidebar = st.file_uploader(
+        "Lista mestra",
+        type=["xls", "xlsx", "csv"],
+        label_visibility="collapsed",
+        key="master_file_sidebar_widget",
+    )
+    if master_file_sidebar is not None:
+        st.session_state.master_file_upload = master_file_sidebar
+
     processar = st.button("🚀 Processar ingestão completa", type="primary", use_container_width=True)
 
 
@@ -1462,10 +1473,6 @@ if pagina_sidebar == "Configurações":
         st.checkbox("Usar quantidade na validação dos casamentos", key="cfg_usar_qtd_casamento")
 
     with aba_mapa_cfg:
-        st.caption("Lista mestra opcional: colunas ITEM e NOMENCLATURA")
-        master_file_cfg = st.file_uploader("Lista mestra", type=["xls", "xlsx", "csv"], key="master_file_widget")
-        if master_file_cfg is not None:
-            st.session_state.master_file_upload = master_file_cfg
         st.checkbox("Gerar lista mestra automática por consenso", key="cfg_gerar_master_auto")
         st.number_input("Mínimo de orçamentos concordando", min_value=2, max_value=10, key="cfg_min_agree")
         st.slider("Confiança mínima do consenso", min_value=60, max_value=100, key="cfg_consensus_threshold")
