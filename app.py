@@ -2398,9 +2398,9 @@ if processar:
                     ):
                         itens = db_utils.get_items_for_file(conn_budget, file_id)
                         empresa = (
-                            f.get("fornecedor_nome_hint")
+                            cached["empresa"]
+                            or f.get("fornecedor_nome_hint")
                             or f.get("fornecedor_email_hint")
-                            or cached["empresa"]
                         )
                         cnpj_orc = (cached.get("cnpj") or "").strip()
                         telefone_orc = (cached.get("telefone") or "").strip()
@@ -2483,9 +2483,9 @@ if processar:
                             continue
 
                         empresa = (
-                            f.get("fornecedor_nome_hint")
+                            result.get("empresa")
+                            or f.get("fornecedor_nome_hint")
                             or f.get("fornecedor_email_hint")
-                            or result.get("empresa")
                             or os.path.splitext(os.path.basename(f["name"]))[0]
                         )
                         cnpj_orc = (result.get("cnpj") or "").strip()
