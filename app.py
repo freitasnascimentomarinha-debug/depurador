@@ -131,9 +131,37 @@ def _get_extract_runtime():
 
 
 def _normalizar_nome_empresa_curto(nome: str | None) -> str | None:
-    """Normaliza o fornecedor sem antecipar o import do modulo de extracao."""
-    import extract_utils
-    return extract_utils.normalizar_nome_empresa_curto(nome)
+    """Retorna um rótulo curto sem deixar a extração depender desse refinamento."""
+    bruto = (nome or "").strip()
+    if not bruto:
+        return None
+
+    try:
+        import extract_utils
+        normalizar = getattr(extract_utils, "normalizar_nome_empresa_curto", None)
+        if callable(normalizar):
+            resultado = normalizar(bruto)
+            if resultado:
+                return resultado
+    except Exception:
+        pass
+
+    email = re.search(r"[\w.+-]+@([\w.-]+)", bruto)
+    if email:
+        dominio = email.group(1).split(".")[0]
+        if len(dominio) >= 3:
+            return dominio.upper()
+
+    texto = unicodedata.normalize("NFKD", bruto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    ignorar = {
+        "COMERCIO", "COMERCIAL", "DA", "DE", "DO", "EMPRESA", "IDENTIFICACAO",
+        "LTDA", "ME", "ORCAMENTO", "PROPOSTA", "SERVICOS", "UN", "UND", "UNIDADE",
+    }
+    for token in re.findall(r"[A-Za-z]{2,}", texto.upper()):
+        if token not in ignorar:
+            return token
+    return None
 
 
 def _load_openrouter_api_key() -> str:
