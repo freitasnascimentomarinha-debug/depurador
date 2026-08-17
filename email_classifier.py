@@ -104,7 +104,7 @@ def _heuristica(parsed: dict) -> Optional[str]:
         return "confirmacao_leitura"
 
     assunto = (parsed.get("assunto") or "").lower()
-    corpo = (parsed.get("corpo") or "").lower()[:1500]
+    corpo = (parsed.get("corpo") or "").lower()[:4000]
     remetente = (parsed.get("remetente_email") or "").lower()
 
     # Confirmação de leitura por assunto
@@ -118,12 +118,37 @@ def _heuristica(parsed: dict) -> Optional[str]:
         if any(k in assunto + corpo for k in ("orçamento", "cotação", "cotacao", "proposta", "solicita")):
             return "pedido_orcamento"
 
-    # Declínio
+    # Declínio: fornecedor recusa participar, não vai orçar ou não tem os itens
     decl_words = ("não podemos", "nao podemos", "impossibilitados", "sem condições",
                   "sem condicoes", "declino", "declínio", "não participar", "nao participar",
-                  "não enviaremos", "nao enviaremos", "desculpe", "lamentamos")
+                  "não enviaremos", "nao enviaremos", "desculpe", "lamentamos",
+                  "não vamos participar", "nao vamos participar", "não iremos participar",
+                  "nao iremos participar", "não temos os itens", "nao temos os itens",
+                  "não temos o item", "nao temos o item", "não trabalhamos com",
+                  "nao trabalhamos com", "não trabalhamos mais com", "nao trabalhamos mais com",
+                  "não temos em estoque", "nao temos em estoque", "fora da nossa linha",
+                  "fora de nossa linha", "não fabricamos", "nao fabricamos",
+                  "não comercializamos", "nao comercializamos", "não temos disponibilidade",
+                  "nao temos disponibilidade", "não vamos conseguir", "nao vamos conseguir",
+                  "não teremos condições", "nao teremos condicoes", "não será possível",
+                  "nao sera possivel", "infelizmente não", "infelizmente nao",
+                  "não temos interesse", "nao temos interesse", "descontinuado",
+                  "fora de linha", "não é mais fabricado", "nao e mais fabricado")
     if any(w in corpo for w in decl_words):
         return "declinio"
+
+    # Orçamento recebido: resposta com conteúdo de proposta/preço.
+    # Tem prioridade sobre "dúvida" — um email de cotação pode conter "?"
+    # (ex.: "alguma dúvida, favor entrar em contato?") sem deixar de ser
+    # um orçamento recebido de fato.
+    orcamento_words = ("proposta de preços", "proposta de precos", "nossa proposta",
+                       "segue proposta", "segue cotação", "segue cotacao",
+                       "conforme solicitado", "valor unitário", "valor unitario",
+                       "preço unitário", "preco unitario", "r$/un", "r$/pct",
+                       "nossa cotação", "nossa cotacao")
+    tem_valor_monetario = bool(re.search(r"r\$\s?\d", corpo))
+    if any(w in corpo for w in orcamento_words) or tem_valor_monetario:
+        return "orcamento_recebido"
 
     # Dúvida do fornecedor: pergunta sobre itens, prazo ou condições.
     # Usa assunto + corpo porque muitas respostas curtas deixam a pergunta
@@ -133,15 +158,6 @@ def _heuristica(parsed: dict) -> Optional[str]:
     texto_duvida = f"{assunto} {corpo}"
     if "?" in texto_duvida:
         return "duvida"
-
-    # Orçamento recebido: resposta com conteúdo de proposta/preço
-    orcamento_words = ("proposta de preços", "proposta de precos", "nossa proposta",
-                       "segue proposta", "segue cotação", "segue cotacao",
-                       "conforme solicitado", "valor unitário", "valor unitario",
-                       "preço unitário", "preco unitario", "r$/un", "r$/pct",
-                       "nossa cotação", "nossa cotacao")
-    if any(w in corpo for w in orcamento_words):
-        return "orcamento_recebido"
 
     return None
 
@@ -155,10 +171,10 @@ Você é um assistente especializado em classificar emails de processos licitat�
 da Marinha do Brasil. Classifique o email fornecido em UMA das categorias:
 
 pedido_orcamento   – Email enviado pela Marinha/empresa solicitando orçamento ou proposta de preços a fornecedores
-orcamento_recebido – Fornecedor responde com orçamento, proposta ou preços (com ou sem arquivo anexo)
+orcamento_recebido – Fornecedor responde com orçamento, proposta ou preços (com ou sem arquivo anexo). Tem PRIORIDADE sobre "duvida" e "declinio": se o email contém preços, valores (ex.: "R$"), tabela de itens cotados ou proposta comercial, classifique como orcamento_recebido mesmo que também contenha uma pergunta ou uma ressalva sobre algum item.
 confirmacao_leitura– Aviso automático de leitura, confirmação de entrega ou acuse de recebimento
-declinio           – Fornecedor informa que não participará / não enviará orçamento
-duvida             – Fornecedor faz perguntas sobre itens, especificações ou o processo. Use "duvida" SOMENTE se o texto contiver uma pergunta explícita (frase interrogativa). Se o email só comenta, informa ou afirma algo sem perguntar nada, classifique como "outro", mesmo que mencione prazo, especificação etc.
+declinio           – Fornecedor informa que NÃO vai orçar: recusa participar, não tem os itens/produtos solicitados, não trabalha com aquela linha, item descontinuado/fora de linha, sem estoque ou sem condições de atender. Não é preciso pedido de desculpas explícito.
+duvida             – Fornecedor faz perguntas sobre itens, especificações ou o processo, SEM enviar orçamento nem declinar. Use "duvida" SOMENTE se o texto contiver uma pergunta explícita (frase interrogativa) e não se enquadrar em orcamento_recebido ou declinio. Se o email só comenta, informa ou afirma algo sem perguntar nada, classifique como "outro", mesmo que mencione prazo, especificação etc.
 tramite_interno    – Email interno da empresa/órgão, Marinha apenas em cópia, não relacionado ao orçamento
 outro              – Qualquer outra situação
 
@@ -259,6 +275,12 @@ Corpo do email:
             # Guarda-corpo: IA só pode classificar "duvida" se houver pergunta de fato no texto.
             if tipo == "duvida" and "?" not in f'{parsed.get("assunto", "")} {parsed.get("corpo", "")}':
                 tipo = "outro"
+
+            # Guarda-corpo: orçamento recebido tem prioridade sobre "duvida" quando
+            # o corpo traz valores monetários explícitos (a IA às vezes se prende
+            # a uma pergunta pontual do fornecedor e ignora a proposta anexada).
+            if tipo == "duvida" and re.search(r"r\$\s?\d", (parsed.get("corpo") or "").lower()):
+                tipo = "orcamento_recebido"
 
             usage_raw = data.get("usage") or {}
             usage = _calcular_custo(usage_raw, model)

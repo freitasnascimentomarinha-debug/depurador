@@ -2824,8 +2824,8 @@ with aba_emails:
                     corpo = process_db.get_email_corpo(conn_proc, e["id"])
                     st.text_area(
                         "Corpo",
-                        value=corpo[:3000] + ("..." if len(corpo) > 3000 else ""),
-                        height=220,
+                        value=corpo,
+                        height=400,
                         disabled=True,
                         key=f"body_{e['id']}",
                     )
