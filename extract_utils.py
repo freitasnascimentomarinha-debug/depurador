@@ -11,6 +11,7 @@ import re
 import shutil
 import time
 import csv
+import unicodedata
 from collections import Counter
 
 import requests
@@ -24,6 +25,7 @@ from normalize_utils import (
     normalizar_item,
 )
 from structured_extract import (
+    _import_openpyxl,
     detectar_tipo_e_rotear,
     extrair_docx_estruturado,
     extrair_xlsx_estruturado,
@@ -935,6 +937,214 @@ def comparar_extracoes(itens_parser: list[dict], itens_ia: list[dict]):
     return itens_finais, conflitos
 
 
+# Domínios de e-mail genéricos: nunca usar como nome de empresa (pessoa física
+# ou provedor gratuito não identifica o fornecedor).
+_DOMINIOS_EMAIL_GENERICOS = {
+    "gmail.com", "hotmail.com", "outlook.com", "outlook.com.br", "yahoo.com",
+    "yahoo.com.br", "bol.com.br", "uol.com.br", "terra.com.br", "live.com",
+    "icloud.com", "globo.com", "ig.com.br",
+}
+
+# Se a razão social "detectada" contiver um destes termos, é o comprador
+# (Marinha), não o fornecedor — descarta o resultado.
+_TERMOS_COMPRADOR = ("MARINHA", "COMANDO", "COMRJ")
+
+
+def _nome_from_header(from_hdr: str) -> str | None:
+    """Extrai o nome de exibição (ou usuário do e-mail) do cabeçalho From."""
+    if not from_hdr:
+        return None
+    m = re.match(r"(?P<name>.+?)\s*<.+?>", from_hdr)
+    if m:
+        nome = m.group("name").strip().strip('"')
+        return nome or None
+    nome = (from_hdr.split("@")[0] if "@" in from_hdr else from_hdr).strip()
+    return nome or None
+
+
+def _dominio_email_para_nome(email_remetente: str | None) -> str | None:
+    """Deriva um nome de empresa a partir do domínio do e-mail, descartando
+    provedores genéricos (gmail, hotmail etc.)."""
+    if not email_remetente or "@" not in email_remetente:
+        return None
+    dominio = email_remetente.strip().lower().split("@")[-1].strip(">").strip()
+    if not dominio or dominio in _DOMINIOS_EMAIL_GENERICOS:
+        return None
+    primeiro_rotulo = dominio.split(".")[0]
+    if not primeiro_rotulo:
+        return None
+    return primeiro_rotulo.upper()
+
+
+def _extrair_email_de_header(from_hdr: str) -> str | None:
+    if not from_hdr:
+        return None
+    m = re.search(r"<(?P<email>[^<>]+@[^<>]+)>", from_hdr)
+    if m:
+        return m.group("email").strip()
+    if "@" in from_hdr:
+        return from_hdr.strip()
+    return None
+
+
+def _extrair_razao_social_xlsx_aba2(path: str) -> str | None:
+    """Lê o campo 'RAZÃO SOCIAL' da aba 'Aba2 MODELO DE PROPOSTA' (ou
+    equivalente) de um .xlsx: rótulo na primeira coluna, valor em alguma
+    coluna à direita, na mesma linha, dentro das primeiras ~18 linhas."""
+    if not path.lower().endswith((".xlsx", ".xls")):
+        return None
+    try:
+        openpyxl = _import_openpyxl()
+        wb = openpyxl.load_workbook(path, data_only=True)
+    except Exception:
+        return None
+
+    def _norm(txt) -> str:
+        if txt is None:
+            return ""
+        base = unicodedata.normalize("NFKD", str(txt))
+        sem_acento = "".join(ch for ch in base if not unicodedata.combining(ch))
+        return re.sub(r"\s+", " ", sem_acento).strip().upper()
+
+    sheets = list(wb.worksheets)
+    # Prioriza a aba cujo nome sugere ser o modelo de proposta.
+    sheets.sort(key=lambda s: 0 if ("MODELO" in _norm(s.title) and "PROPOSTA" in _norm(s.title)) else 1)
+
+    for sheet in sheets:
+        for row in sheet.iter_rows(min_row=1, max_row=18, values_only=True):
+            if not row:
+                continue
+            rotulo = _norm(row[0])
+            if "RAZAO SOCIAL" not in rotulo:
+                continue
+            for valor in row[1:]:
+                if valor is None:
+                    continue
+                valor_str = str(valor).strip()
+                if not valor_str or valor_str == "*":
+                    continue
+                return valor_str
+    return None
+
+
+def resolver_nome_empresa(
+    *,
+    xlsx_paths: list[str] | None = None,
+    texto: str | None = None,
+    remetente_email: str | None = None,
+    from_hdr: str | None = None,
+) -> str | None:
+    """Resolve o nome do fornecedor com uma única ordem de confiança:
+    1) RAZÃO SOCIAL da aba modelo de proposta do(s) xlsx anexado(s);
+    2) razão social próxima ao CNPJ no texto (descartando o comprador);
+    3) domínio do e-mail do remetente (descartando provedores genéricos);
+    4) nome de exibição do cabeçalho From.
+    """
+    for xlsx_path in (xlsx_paths or []):
+        nome = _extrair_razao_social_xlsx_aba2(xlsx_path)
+        if nome:
+            return nome
+
+    if texto:
+        candidata = extrair_razao_social(texto)
+        if candidata:
+            candidata_up = candidata.upper()
+            if not any(termo in candidata_up for termo in _TERMOS_COMPRADOR):
+                return candidata
+
+    email_efetivo = remetente_email or _extrair_email_de_header(from_hdr or "")
+    nome_dominio = _dominio_email_para_nome(email_efetivo)
+    if nome_dominio:
+        return nome_dominio
+
+    return _nome_from_header(from_hdr or "")
+
+
+def _score_ancoragem(itens: list[dict]) -> int:
+    """Conta itens com número de item ou código de estoque (PI) preenchido —
+    sinal de que o anexo traz a referência oficial do edital."""
+    score = 0
+    for item in itens or []:
+        numero_item = item.get("numero_item")
+        if numero_item not in (None, "", "None"):
+            score += 1
+            continue
+        codigo = item.get("codigo")
+        if codigo and re.fullmatch(r"\d{5,}", str(codigo).strip()):
+            score += 1
+    return score
+
+
+def _chave_item(item: dict) -> str:
+    numero_item = item.get("numero_item")
+    if numero_item not in (None, "", "None"):
+        return f"num:{str(numero_item).strip().lower()}"
+    descricao = (item.get("descricao") or "").strip().lower()
+    return f"desc:{descricao}"
+
+
+def _mesclar_resultados_anexos(resultados: list[dict]) -> dict:
+    """Escolhe como base o anexo com maior 'ancoragem' (mais itens com número
+    de item/código de estoque) e completa com itens exclusivos dos demais
+    anexos, sem sobrescrever nada do resultado base."""
+    if len(resultados) == 1:
+        return resultados[0]
+
+    scores = [_score_ancoragem(r.get("itens", [])) for r in resultados]
+    idx_base = max(range(len(resultados)), key=lambda i: scores[i])
+    base = dict(resultados[idx_base])
+    itens_base = list(base.get("itens", []))
+    chaves_base = {_chave_item(i) for i in itens_base}
+
+    itens_extras = []
+    review_extra = []
+    usage_extra = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cost_usd": 0.0}
+    debug_extra = []
+    truncado_extra = False
+
+    for i, res in enumerate(resultados):
+        if i == idx_base:
+            continue
+        for item in res.get("itens", []):
+            chave = _chave_item(item)
+            if chave in chaves_base:
+                continue
+            chaves_base.add(chave)
+            itens_extras.append(item)
+        review_extra.extend(res.get("review", []) or [])
+        usage_res = res.get("usage") or {}
+        for campo in ("prompt_tokens", "completion_tokens", "total_tokens", "cost_usd"):
+            try:
+                usage_extra[campo] += float(usage_res.get(campo) or 0)
+            except (TypeError, ValueError):
+                pass
+        debug_extra.append(
+            f"Anexo complementar '{os.path.basename(str(res.get('_path', '')))}': "
+            f"{len(res.get('itens', []))} item(ns) considerado(s), "
+            f"{len(itens_extras)} incorporado(s) ao resultado final"
+        )
+        truncado_extra = truncado_extra or bool(res.get("texto_truncado"))
+
+    base["itens"] = itens_base + itens_extras
+    base["review"] = list(base.get("review", []) or []) + review_extra
+    base["texto_truncado"] = bool(base.get("texto_truncado")) or truncado_extra
+    base_usage = dict(base.get("usage") or {})
+    for campo in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        base_usage[campo] = int(base_usage.get(campo, 0) or 0) + int(usage_extra[campo])
+    base_usage["cost_usd"] = float(base_usage.get("cost_usd", 0) or 0) + usage_extra["cost_usd"]
+    base_usage["estimated"] = bool(base_usage.get("estimated")) or any(
+        (r.get("usage") or {}).get("estimated") for r in resultados
+    )
+    base["usage"] = base_usage
+    base["debug_events"] = list(base.get("debug_events", []) or []) + debug_extra
+    if len(resultados) > 1:
+        base.setdefault("debug_highlights", []).append(
+            f"RELEVANTE: {len(resultados)} anexo(s) processado(s); anexo base escolhido por ter "
+            f"mais itens com número de item/código de estoque (ancoragem={scores[idx_base]})"
+        )
+    return base
+
+
 def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                                  pre_filtrar: bool = True,
                                  limiar_alto: int = 85,
@@ -1042,22 +1252,48 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                             except Exception:
                                 continue
                 if attach_paths:
-                    # procura remetente para possivel override do nome da empresa
-                    try:
-                        from_hdr = msg.get('From') or ''
-                        m = re.match(r"(?P<name>.+?)\s*<.+?>", from_hdr)
-                        if m:
-                            empresa_from = m.group('name').strip()
-                        else:
-                            empresa_from = (from_hdr.split('@')[0] if '@' in from_hdr else from_hdr).strip()
-                    except Exception:
-                        empresa_from = None
+                    from_hdr = msg.get('From') or ''
+                    remetente_email = _extrair_email_de_header(from_hdr)
 
-                    # processa o primeiro anexo detectado
-                    res_attach = extrair_orcamento_em_camadas(attach_paths[0], api_key, model, pre_filtrar, limiar_alto, limiar_baixo)
-                    if empresa_from and (not res_attach.get('empresa') or any(tok in str(res_attach.get('empresa')).lower() for tok in ('image', 'attachment', 'unnamed', 'proposta'))):
-                        res_attach['empresa'] = empresa_from
-                    return res_attach
+                    # processa TODOS os anexos individualmente; erro em um nao aborta os demais
+                    resultados_attach = []
+                    for attach_path in attach_paths:
+                        try:
+                            res = extrair_orcamento_em_camadas(
+                                attach_path, api_key, model, pre_filtrar, limiar_alto, limiar_baixo
+                            )
+                            res['_path'] = attach_path
+                            resultados_attach.append(res)
+                        except Exception as exc:
+                            debug_events.append(
+                                f"Falha ao processar anexo '{os.path.basename(attach_path)}': {exc}"
+                            )
+                            continue
+
+                    if not resultados_attach:
+                        # todos os anexos falharam: cai no fluxo sem anexos (usa corpo do email)
+                        attach_paths = []
+                    else:
+                        res_attach = _mesclar_resultados_anexos(resultados_attach)
+                        res_attach.pop('_path', None)
+
+                        xlsx_paths = [p for p in attach_paths if p.lower().endswith((".xlsx", ".xls"))]
+                        textos_anexos = []
+                        for p in attach_paths:
+                            try:
+                                textos_anexos.append(extract_text(p))
+                            except Exception:
+                                continue
+                        texto_para_empresa = "\n".join(textos_anexos) if textos_anexos else None
+                        empresa_resolvida = resolver_nome_empresa(
+                            xlsx_paths=xlsx_paths,
+                            texto=texto_para_empresa,
+                            remetente_email=remetente_email,
+                            from_hdr=from_hdr,
+                        )
+                        if empresa_resolvida:
+                            res_attach['empresa'] = empresa_resolvida
+                        return res_attach
 
                 # sem anexos: monta texto a partir das partes textuais
                 parts = []
@@ -1082,27 +1318,14 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
                 itens_ia = _anotar_fonte_origem(llm.get("itens", []), "ia", pages)
                 itens_finais = itens_ia
 
-                empresa_det = extrair_razao_social(texto_base)
-                empresa_llm = llm.get("empresa")
-
-                # Heuristica: se empresa detectada aparenta ser o comprador (ex: 'marinha', 'solicita'),
-                # prefira o remetente (From) do email como empresa
-                buyer_indicators = ('marinha', 'solicita', 'solicitação', 'solicitacao', 'pedido', 'res_')
-                nome_empresa_detectada = (empresa_llm or empresa_det or '').lower()
-                prefer_from = any(tok in nome_empresa_detectada for tok in buyer_indicators) or not nome_empresa_detectada
-                if prefer_from:
-                    try:
-                        from_hdr = msg.get('From') or ''
-                        m = re.match(r"(?P<name>.+?)\s*<.+?>", from_hdr)
-                        if m:
-                            empresa_from = m.group('name').strip()
-                        else:
-                            empresa_from = (from_hdr.split('@')[0] if '@' in from_hdr else from_hdr).strip()
-                        if empresa_from:
-                            empresa_llm = empresa_from
-                            empresa_det = empresa_from
-                    except Exception:
-                        pass
+                from_hdr = msg.get('From') or ''
+                empresa_resolvida = resolver_nome_empresa(
+                    texto=texto_base,
+                    remetente_email=_extrair_email_de_header(from_hdr),
+                    from_hdr=from_hdr,
+                )
+                empresa_llm = empresa_resolvida or llm.get("empresa")
+                empresa_det = empresa_resolvida
 
                 # Corrige preco_unitario quando necessario
                 itens_corrigidos = []
