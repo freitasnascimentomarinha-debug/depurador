@@ -458,6 +458,7 @@ Dado o texto extraído de um documento de orçamento, retorne APENAS um JSON vá
 }
 
 Regras:
+- "empresa" deve conter somente um nome curto para identificar o fornecedor no cabeçalho do mapa comparativo: prefira a marca ou a primeira palavra distintiva (ex.: "AKITA", "NEXBOLT", "ORBITAL"). Nunca inclua CNPJ, e-mail, endereço, item, UF, código, tipo societário (LTDA, ME, EPP etc.) ou a razão social completa.
 - Extraia TODOS os itens de orçamento encontrados no texto, inclusive os que aparecem sem preço definido.
 - "codigo" é o identificador único do MATERIAL (colunas tipo PI, NSN, P/N, Part Number, Nº Estoque, Cód. Item, Referência) — não confundir com "numero_item", que é a posição sequencial do item no edital (1, 2, 3...). Copie o código exatamente como está, com traços e pontos.
 - Copie a "descricao" exatamente como está escrita no documento, por extenso — não abrevie, não resuma e não corrija siglas técnicas. Se o mesmo item aparecer mais de uma vez no documento com descrições diferentes (uma mais completa que a outra), use a versão mais completa.
@@ -1058,6 +1059,44 @@ def resolver_nome_empresa(
         return nome_dominio
 
     return _nome_from_header(from_hdr or "")
+
+
+_PALAVRAS_NAO_IDENTIFICADORAS_EMPRESA = {
+    "A", "COMERCIO", "COMERCIAL", "COMPANHIA", "CONSTRUCOES", "DE", "DA", "DO",
+    "DADOS", "DAS", "DOS", "E", "EIRELI", "EMPRESA", "ENDERECO", "ENGENHARIA",
+    "EPP", "FORNECEDOR", "IDENTIFICACAO", "IRELI", "LTDA", "ME", "MEI", "ORCAMENTO",
+    "PROPOSTA", "RAZAO", "SA", "SERVICO", "SERVICOS", "SOCIAL", "SOCIEDADE", "SOLUCOES",
+    "UN", "UND", "UNIDADE",
+}
+
+
+def normalizar_nome_empresa_curto(nome: str | None) -> str | None:
+    """Retorna uma marca curta e legivel para o cabecalho do mapa comparativo."""
+    bruto = (nome or "").strip()
+    if not bruto:
+        return None
+
+    emails = re.findall(r"[\w.+-]+@[\w.-]+", bruto)
+    if emails:
+        dominio = emails[0].split("@", 1)[1].split(".")[0]
+        dominio = unicodedata.normalize("NFKD", dominio)
+        dominio = "".join(ch for ch in dominio if not unicodedata.combining(ch)).upper()
+        for sufixo in ("COMERCIO", "ENGENHARIA", "INDUSTRIA", "SERVICOS", "SOLUCOES"):
+            if dominio.endswith(sufixo) and len(dominio) - len(sufixo) >= 3:
+                dominio = dominio[:-len(sufixo)]
+                break
+        if re.fullmatch(r"[A-Z]{3,}", dominio):
+            return dominio
+
+    texto = unicodedata.normalize("NFKD", bruto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"\S+@\S+", " ", texto)
+    texto = re.sub(r"\b\d+[\w./-]*\b", " ", texto)
+    tokens = re.findall(r"[A-Za-z]{2,}", texto.upper())
+    for token in tokens:
+        if token not in _PALAVRAS_NAO_IDENTIFICADORAS_EMPRESA:
+            return token
+    return None
 
 
 def _score_ancoragem(itens: list[dict]) -> int:

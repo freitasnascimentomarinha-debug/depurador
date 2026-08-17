@@ -7,9 +7,9 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-# A versao 7 corrige a prioridade do fornecedor no mapa comparativo: caches
-# anteriores podem ter gravado o nome do remetente no lugar da empresa.
-EXTRACTION_VERSION = "7"
+# A versao 8 corrige a prioridade do fornecedor no mapa comparativo e passa a
+# persistir um identificador curto, adequado para o cabecalho das colunas.
+EXTRACTION_VERSION = "8"
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:

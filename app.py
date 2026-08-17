@@ -130,6 +130,12 @@ def _get_extract_runtime():
     return extract_utils.extrair_orcamento_em_camadas, extract_utils.ocr_runtime_status
 
 
+def _normalizar_nome_empresa_curto(nome: str | None) -> str | None:
+    """Normaliza o fornecedor sem antecipar o import do modulo de extracao."""
+    import extract_utils
+    return extract_utils.normalizar_nome_empresa_curto(nome)
+
+
 def _load_openrouter_api_key() -> str:
     # 1) Secrets do Streamlit (arquivo secrets.toml pode nem existir localmente)
     try:
@@ -2397,10 +2403,15 @@ if processar:
                         and cached.get("extraction_version") == db_utils.EXTRACTION_VERSION
                     ):
                         itens = db_utils.get_items_for_file(conn_budget, file_id)
-                        empresa = (
-                            cached["empresa"]
-                            or f.get("fornecedor_nome_hint")
-                            or f.get("fornecedor_email_hint")
+                        candidatas_empresa = (
+                            cached["empresa"],
+                            f.get("fornecedor_email_hint"),
+                            f.get("fornecedor_nome_hint"),
+                        )
+                        empresa = next(
+                            (nome for candidata in candidatas_empresa
+                             if (nome := _normalizar_nome_empresa_curto(candidata))),
+                            cached["empresa"] or f["name"],
                         )
                         cnpj_orc = (cached.get("cnpj") or "").strip()
                         telefone_orc = (cached.get("telefone") or "").strip()
@@ -2482,11 +2493,16 @@ if processar:
                             )
                             continue
 
-                        empresa = (
-                            result.get("empresa")
-                            or f.get("fornecedor_nome_hint")
-                            or f.get("fornecedor_email_hint")
-                            or os.path.splitext(os.path.basename(f["name"]))[0]
+                        candidatas_empresa = (
+                            result.get("empresa"),
+                            f.get("fornecedor_email_hint"),
+                            f.get("fornecedor_nome_hint"),
+                            os.path.splitext(os.path.basename(f["name"]))[0],
+                        )
+                        empresa = next(
+                            (nome for candidata in candidatas_empresa
+                             if (nome := _normalizar_nome_empresa_curto(candidata))),
+                            os.path.splitext(os.path.basename(f["name"]))[0],
                         )
                         cnpj_orc = (result.get("cnpj") or "").strip()
                         telefone_orc = (result.get("telefone") or "").strip()
