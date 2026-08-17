@@ -2009,11 +2009,18 @@ if processar:
                     template_anexo_bytes = None
                     template_anexo_nome = None
                     datas_pedido_por_email: dict[str, str] = {}
+                    # Última instância de fallback: data do pedido mais antigo enviado pela
+                    # Marinha no processo, para quando o fornecedor não estava nos
+                    # destinatários da época e o histórico citado na resposta não trouxe data.
+                    data_pedido_mais_antiga_geral = None
                     for eml in eml_entries:
                         _parsed_pre = email_utils.parse_eml(eml["conteudo_bytes"], filename=eml["nome"])
                         parsed_emls.append(_parsed_pre)
                         _rem_pre = (_parsed_pre.get("remetente_email") or "").lower()
                         if _email_interno(_rem_pre) and _parsed_pre.get("data_envio"):
+                            _data_geral = _parsed_pre["data_envio"]
+                            if not data_pedido_mais_antiga_geral or _data_geral < data_pedido_mais_antiga_geral:
+                                data_pedido_mais_antiga_geral = _data_geral
                             for _dest_pre in _parsed_pre.get("destinatarios", []):
                                 _dest_email_pre = (_dest_pre.get("email") or "").strip().lower()
                                 if _dest_email_pre and not _email_interno(_dest_email_pre):
@@ -2248,6 +2255,16 @@ if processar:
                                 data_pedido_hist
                                 or datas_pedido_por_email.get((rem_email or "").strip().lower())
                             )
+                            # Último recurso: data do pedido mais antigo enviado pela Marinha
+                            # no processo, mesmo que este fornecedor não constasse nos
+                            # destinatários à época — só usa se for anterior à resposta.
+                            if (
+                                not data_pedido_hist
+                                and data_pedido_mais_antiga_geral
+                                and parsed.get("data_envio")
+                                and data_pedido_mais_antiga_geral <= parsed["data_envio"]
+                            ):
+                                data_pedido_hist = data_pedido_mais_antiga_geral
                         if rem_email and not _email_interno(rem_email):
                             if rem_cnpj:
                                 n_cnpjs_identificados += 1

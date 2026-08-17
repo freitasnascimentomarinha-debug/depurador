@@ -6,7 +6,7 @@ Categorias:
   orcamento_recebido – Fornecedor respondendo com orçamento (com ou sem anexo)
   confirmacao_leitura– Confirmação de leitura / aviso de entrega (MDN)
   declinio           – Fornecedor recusando participar
-  duvida             – Fornecedor fazendo perguntas sobre o processo ou itens
+  duvida             – Fornecedor fazendo perguntas sobre o processo ou itens (só quando há pergunta explícita no texto)
   tramite_interno    – Tráfego interno (Marinha na cópia, não é o destinatário principal)
   outro              – Qualquer outra coisa
 """
@@ -127,19 +127,11 @@ def _heuristica(parsed: dict) -> Optional[str]:
 
     # Dúvida do fornecedor: pergunta sobre itens, prazo ou condições.
     # Usa assunto + corpo porque muitas respostas curtas deixam a pergunta
-    # apenas no assunto do e-mail.
+    # apenas no assunto do e-mail. Regra: só é "dúvida" se houver de fato uma
+    # pergunta no texto ("?"); frases de intenção sem interrogação não bastam
+    # e devem cair em "outro".
     texto_duvida = f"{assunto} {corpo}"
-    duvida_words = (
-        "gostaria de esclarecimento", "poderia esclarecer", "poderia informar",
-        "poderia confirmar", "qual a especificação", "qual a especificacao",
-        "o que é o item", "o que e o item", "pode detalhar", "poderia detalhar",
-        "prazo de entrega", "prazo para entrega", "qual o prazo", "em qual cidade",
-        "local de entrega", "pergunta sobre", "dúvida sobre", "duvida sobre",
-        "tenho uma dúvida", "tenho uma duvida", "gostaria de saber",
-        "favor esclarecer", "gentileza esclarecer", "poderiam esclarecer",
-        "como devemos", "qual seria", "será possível", "sera possivel",
-    )
-    if "?" in texto_duvida or any(w in texto_duvida for w in duvida_words):
+    if "?" in texto_duvida:
         return "duvida"
 
     # Orçamento recebido: resposta com conteúdo de proposta/preço
@@ -166,7 +158,7 @@ pedido_orcamento   – Email enviado pela Marinha/empresa solicitando orçamento
 orcamento_recebido – Fornecedor responde com orçamento, proposta ou preços (com ou sem arquivo anexo)
 confirmacao_leitura– Aviso automático de leitura, confirmação de entrega ou acuse de recebimento
 declinio           – Fornecedor informa que não participará / não enviará orçamento
-duvida             – Fornecedor faz perguntas sobre itens, especificações ou o processo
+duvida             – Fornecedor faz perguntas sobre itens, especificações ou o processo. Use "duvida" SOMENTE se o texto contiver uma pergunta explícita (frase interrogativa). Se o email só comenta, informa ou afirma algo sem perguntar nada, classifique como "outro", mesmo que mencione prazo, especificação etc.
 tramite_interno    – Email interno da empresa/órgão, Marinha apenas em cópia, não relacionado ao orçamento
 outro              – Qualquer outra situação
 
@@ -263,6 +255,9 @@ Corpo do email:
             result = json.loads(content)
             tipo = result.get("tipo", "outro")
             if tipo not in TIPOS_VALIDOS:
+                tipo = "outro"
+            # Guarda-corpo: IA só pode classificar "duvida" se houver pergunta de fato no texto.
+            if tipo == "duvida" and "?" not in f'{parsed.get("assunto", "")} {parsed.get("corpo", "")}':
                 tipo = "outro"
 
             usage_raw = data.get("usage") or {}

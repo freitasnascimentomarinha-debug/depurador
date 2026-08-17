@@ -436,6 +436,14 @@ def build_comparison_table(all_extractions, master_items=None, fuzzy_threshold: 
                             })
                 except (TypeError, ValueError):
                     pass
+            # R$ 0,00 não é uma cotação válida (não preenchido/isento) — desconsidera
+            # para não distorcer o mapa comparativo (menor preço, médias, outliers).
+            if preco is not None:
+                try:
+                    if abs(float(preco)) < 0.005:
+                        preco = None
+                except (TypeError, ValueError):
+                    pass
             tem_preco = preco is not None
             quantidade = item.get("quantidade")
             unidade = item.get("unidade")
