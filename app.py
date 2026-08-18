@@ -127,7 +127,11 @@ def _get_extract_runtime():
     """Carrega extract_utils sob demanda para reduzir risco de crash no bootstrap."""
     import extract_utils
 
-    return extract_utils.extrair_orcamento_em_camadas, extract_utils.ocr_runtime_status
+    return (
+        extract_utils.extrair_orcamento_em_camadas,
+        extract_utils.extrair_anexos_orcamento_em_camadas,
+        extract_utils.ocr_runtime_status,
+    )
 
 
 def _normalizar_nome_empresa_curto(nome: str | None) -> str | None:
@@ -1799,7 +1803,7 @@ if processar:
         st.stop()
 
     try:
-        extrair_orcamento_em_camadas, _ocr_runtime_fn = _get_extract_runtime()
+        extrair_orcamento_em_camadas, extrair_anexos_orcamento_em_camadas, _ocr_runtime_fn = _get_extract_runtime()
     except Exception:
         st.error("Falha ao carregar o motor de extração de orçamentos neste ambiente.")
         with st.expander("Detalhes técnicos", expanded=False):
@@ -2217,9 +2221,9 @@ if processar:
                                 f"Recebido, mas o .eml não trouxe nenhum anexo detectado."
                             )
 
-                        # Anexos binários no banco
-                        melhor_anexo = None
-                        melhor_pontuacao = -10_000
+                        # Anexos binários no banco. Um fornecedor pode enviar
+                        # PDF e planilha complementares na mesma resposta.
+                        anexos_candidatos = []
                         for anx in parsed.get("anexos", []):
                             n_anexos_total += 1
                             if salvar_binario_anexos and not email_existente:
@@ -2236,45 +2240,40 @@ if processar:
                                     anx.get("tipo_mime") or "",
                                     tipo_email,
                                 )
-                                if pontuacao > 0 and pontuacao > melhor_pontuacao:
-                                    melhor_pontuacao = pontuacao
-                                    melhor_anexo = anx
-
-                        # Preferência explícita por PDF quando há outro anexo PDF
-                        # com "cotação" no nome e o melhor selecionado não é PDF.
-                        if processar_orcamentos_de_anexos and melhor_anexo is not None:
-                            nome_melhor = (melhor_anexo.get("nome") or "").lower()
-                            if not nome_melhor.endswith(".pdf") and "cota" in nome_melhor:
-                                for anx in parsed.get("anexos", []):
-                                    nome_anx = (anx.get("nome") or "").lower()
-                                    if nome_anx.endswith(".pdf") and "cota" in nome_anx:
-                                        p, _ = _score_email_attachment_candidate(
-                                            anx.get("nome", ""), anx.get("tipo_mime") or "", tipo_email
-                                        )
-                                        if p > 0:
-                                            melhor_anexo = anx
-                                            break
+                                if pontuacao > 0:
+                                    anexos_candidatos.append(anx)
 
                         if processar_orcamentos_de_anexos:
-                            if melhor_anexo is None:
+                            if not anexos_candidatos:
                                 n_anexos_filtrados += len(parsed.get("anexos", []))
                             else:
-                                n_anexos_filtrados += max(0, len(parsed.get("anexos", [])) - 1)
-                                h = file_utils.hash_bytes(melhor_anexo["conteudo_bytes"])
-                                dedup_key = (h, (rem_email or "").lower())
+                                anexos_cotacao = []
+                                for anx in anexos_candidatos:
+                                    hash_anexo = file_utils.hash_bytes(anx["conteudo_bytes"])
+                                    if hash_anexo in template_hashes:
+                                        n_anexos_filtrados += 1
+                                        add_log(
+                                            f"Anexo ignorado (template em branco do pedido, devolvido sem preços): "
+                                            f"{anx['nome']} — {rem_email}"
+                                        )
+                                        continue
+                                    anexos_cotacao.append((anx, hash_anexo))
+                                n_anexos_filtrados += max(0, len(parsed.get("anexos", [])) - len(anexos_candidatos))
+                                if not anexos_cotacao:
+                                    continue
+                                hashes = [hash_anexo for _, hash_anexo in anexos_cotacao]
+                                dedup_key = ("|".join(sorted(hashes)), (rem_email or "").lower())
                                 if dedup_key in anexos_orc_hashes:
                                     n_anexos_duplicados += 1
                                     add_log(
-                                        f"Anexo ignorado (mesmo arquivo já processado deste remetente): {melhor_anexo['nome']}"
+                                        "Anexos ignorados (mesmo conjunto já processado deste remetente)."
                                     )
                                 else:
                                     anexos_orc_hashes.add(dedup_key)
-                                    path = _persist_bytes(
-                                        tmpdir,
-                                        melhor_anexo["nome"],
-                                        melhor_anexo["conteudo_bytes"],
-                                        prefix=f"email_{email_id}",
-                                    )
+                                    caminhos_anexos = [
+                                        _persist_bytes(tmpdir, anx["nome"], anx["conteudo_bytes"], prefix=f"email_{email_id}_{idx}")
+                                        for idx, (anx, _) in enumerate(anexos_cotacao)
+                                    ]
                                     # Se o remetente aparenta ser a Marinha / domínio .mil.br
                                     # ou for endereço institucional conhecido,
                                     # não trate o anexo como orçamento de fornecedor —
@@ -2283,22 +2282,16 @@ if processar:
                                     _rem_lower = (rem_email or "").lower()
                                     if re.search(r"\.mil\.br$|\.mar\.mil\.br$|\.marinha\.mil\.br$", _rem_lower) or _rem_lower in _REMETENTES_INSTITUCIONAIS:
                                         add_log(
-                                            f"Anexo ignorado (remetente institucional): {melhor_anexo['nome']} — {rem_email}"
-                                        )
-                                    elif h in template_hashes:
-                                        # Lição de campo: mesmo hash do template do órgão
-                                        # = arquivo devolvido em branco, não é orçamento.
-                                        n_anexos_filtrados += 1
-                                        add_log(
-                                            f"Anexo ignorado (template em branco do pedido, devolvido sem preços): "
-                                            f"{melhor_anexo['nome']} — {rem_email}"
+                                            f"Anexos ignorados (remetente institucional): {rem_email}"
                                         )
                                     else:
+                                        nomes_anexos = [anx["nome"] for anx, _ in anexos_cotacao]
                                         budget_candidates.append({
-                                            "name": f"email:{parsed.get('arquivo_eml_nome')}/{melhor_anexo['nome']}",
-                                            "path": path,
-                                            "modified_time": h,
-                                            "file_id": f"email_attachment:{email_id}:{melhor_anexo['nome']}:{h[:12]}",
+                                            "name": f"email:{parsed.get('arquivo_eml_nome')}/" + " + ".join(nomes_anexos),
+                                            "path": caminhos_anexos[0],
+                                            "anexos_complementares": caminhos_anexos,
+                                            "modified_time": "|".join(sorted(hashes)),
+                                            "file_id": f"email_attachments:{email_id}:{hashes[0][:12]}",
                                             "origem": "anexo_email",
                                             "fornecedor_email_hint": rem_email,
                                             "fornecedor_nome_hint": rem_nome,
@@ -2306,7 +2299,7 @@ if processar:
                                         n_anexos_orc_aprovados += 1
                                         rem_label = rem_nome or rem_email or "remetente desconhecido"
                                         add_log(
-                                            f"Anexo da {rem_label} <{rem_email}>: {melhor_anexo['nome']}"
+                                            f"Anexos da {rem_label} <{rem_email}>: {', '.join(nomes_anexos)}"
                                         )
 
                         # Atualiza participação dos fornecedores
@@ -2525,15 +2518,22 @@ if processar:
                             f"OpenRouter: enviando conteúdo do orçamento de {fornecedor_atual} "
                             f"para o modelo principal {model}."
                         )
-                        result = extrair_orcamento_em_camadas(
-                            path=f["path"],
-                            api_key=api_key,
-                            model=model,
-                            pre_filtrar=pre_filtrar,
-                            limiar_alto=int(limiar_confianca_alta),
-                            limiar_baixo=int(limiar_confianca_baixa),
-                            lista_referencia=lista_referencia_extracao,
-                        )
+                        if f.get("anexos_complementares"):
+                            result = extrair_anexos_orcamento_em_camadas(
+                                f["anexos_complementares"], api_key, model, pre_filtrar,
+                                int(limiar_confianca_alta), int(limiar_confianca_baixa),
+                                lista_referencia_extracao,
+                            )
+                        else:
+                            result = extrair_orcamento_em_camadas(
+                                path=f["path"],
+                                api_key=api_key,
+                                model=model,
+                                pre_filtrar=pre_filtrar,
+                                limiar_alto=int(limiar_confianca_alta),
+                                limiar_baixo=int(limiar_confianca_baixa),
+                                lista_referencia=lista_referencia_extracao,
+                            )
                         add_log(
                             f"Leitura concluída: técnica={result.get('fonte_processamento', 'ia')}, "
                             f"itens={len(result.get('itens') or [])}, "

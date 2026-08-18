@@ -59,6 +59,12 @@ _RE_LINHA_MODELO_PROPOSTA = re.compile(
     r"([A-Z]{1,3})\s+(\d{1,6})\s+(.*\S)\s*$"
 )
 _RE_MOEDA = re.compile(r"(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})")
+_RE_LINHA_COTACAO_FORNECEDOR = re.compile(
+    r"^\s*(?P<codigo>[A-Z0-9][A-Z0-9._/-]{2,})\s+(?P<descricao>.+?)\s+"
+    r"(?P<ncm>\d{4}\.\d{2}\.\d{2})\s+(?P<quantidade>\d+(?:,\d+)?)\s+"
+    r"(?P<unidade>[A-Z]{1,4})\s+(?P<unitario>\d+(?:,\d+)?)\s+"
+    r"(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s*$"
+)
 
 
 def _import_document():
@@ -614,6 +620,29 @@ def extrair_pdf_modelo_proposta(path: str) -> dict:
     return {"itens": itens, "review": review}
 
 
+def extrair_pdf_cotacao_fornecedor(path: str) -> dict:
+    """Lê cotações cujo item ocupa uma linha com Código, NCM, quantidade e preços."""
+    itens = []
+    for linha in _texto_layout_pdf(path).splitlines():
+        match = _RE_LINHA_COTACAO_FORNECEDOR.match(linha)
+        if not match:
+            continue
+        dados = match.groupdict()
+        item = {
+            "numero_item": None,
+            "codigo": dados["codigo"],
+            "descricao": limpar_quebras_e_caracteres(dados["descricao"]),
+            "unidade": dados["unidade"],
+            "quantidade": parse_valor_brl(dados["quantidade"]),
+            "preco_unitario": parse_valor_brl(dados["unitario"]),
+            "preco_total": parse_valor_brl(dados["total"]),
+            "fonte_extracao": "estrutural",
+            "origem": os.path.basename(path),
+        }
+        itens.append(normalizar_item(item))
+    return {"itens": itens, "review": []}
+
+
 def tentar_extracao_estrutural_pdf(path: str) -> dict:
     """Tenta extrair itens de PDF, em duas camadas:
 
@@ -626,6 +655,18 @@ def tentar_extracao_estrutural_pdf(path: str) -> dict:
 
     Se a camada 1 devolver itens, ela é usada e a camada 2 é pulada.
     """
+    resultado_fornecedor = extrair_pdf_cotacao_fornecedor(path)
+    if resultado_fornecedor.get("itens"):
+        itens = resultado_fornecedor["itens"]
+        return {
+            "itens": itens,
+            "encontrou_tabela": True,
+            "encontrou_colunas": True,
+            "linhas_extraidas": len(itens),
+            "blocos_item": len(itens),
+            "review": [],
+        }
+
     resultado_layout = extrair_pdf_modelo_proposta(path)
     if resultado_layout.get("itens"):
         itens = resultado_layout["itens"]

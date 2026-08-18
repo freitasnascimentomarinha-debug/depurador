@@ -7,9 +7,9 @@ import sqlite3
 from datetime import datetime, timezone
 
 
-# A versao 8 corrige a prioridade do fornecedor no mapa comparativo e passa a
-# persistir um identificador curto, adequado para o cabecalho das colunas.
-EXTRACTION_VERSION = "8"
+# A versao 9 passa a consolidar anexos complementares da mesma resposta e
+# reconhece o layout de preços unitários de cotações comerciais em PDF.
+EXTRACTION_VERSION = "9"
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:

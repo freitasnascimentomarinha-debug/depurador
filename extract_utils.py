@@ -1141,12 +1141,36 @@ def _mesclar_resultados_anexos(resultados: list[dict]) -> dict:
     debug_extra = []
     truncado_extra = False
 
+    def _mesmo_item_cotado(base_item: dict, complemento: dict) -> bool:
+        """Reconhece o mesmo item entre PDF comercial e planilha do edital.
+
+        O número/código pode mudar entre os documentos, mas quantidade, preço
+        unitário e total formam uma assinatura forte da cotação preenchida.
+        """
+        try:
+            campos = ("quantidade", "preco_unitario", "preco_total")
+            for campo in campos:
+                valor_base = float(base_item.get(campo))
+                valor_complemento = float(complemento.get(campo))
+                tolerancia = max(0.01, 0.001 * abs(valor_base))
+                if abs(valor_base - valor_complemento) > tolerancia:
+                    return False
+            return True
+        except (TypeError, ValueError):
+            return False
+
     for i, res in enumerate(resultados):
         if i == idx_base:
             continue
         for item in res.get("itens", []):
             chave = _chave_item(item)
             if chave in chaves_base:
+                continue
+            item_base = next((existente for existente in itens_base if _mesmo_item_cotado(existente, item)), None)
+            if item_base is not None:
+                descricao_complementar = str(item.get("descricao") or "")
+                if len(descricao_complementar) > len(str(item_base.get("descricao") or "")):
+                    item_base["descricao"] = descricao_complementar
                 continue
             chaves_base.add(chave)
             itens_extras.append(item)
@@ -1182,6 +1206,29 @@ def _mesclar_resultados_anexos(resultados: list[dict]) -> dict:
             f"mais itens com número de item/código de estoque (ancoragem={scores[idx_base]})"
         )
     return base
+
+
+def extrair_anexos_orcamento_em_camadas(paths: list[str], api_key: str, model: str,
+                                        pre_filtrar: bool = True,
+                                        limiar_alto: int = 85,
+                                        limiar_baixo: int = 40,
+                                        lista_referencia: list[dict] | None = None) -> dict:
+    """Extrai e consolida anexos complementares de uma mesma resposta de fornecedor."""
+    resultados = []
+    for path in paths:
+        try:
+            resultado = extrair_orcamento_em_camadas(
+                path, api_key, model, pre_filtrar, limiar_alto, limiar_baixo, lista_referencia
+            )
+            resultado["_path"] = path
+            resultados.append(resultado)
+        except Exception:
+            continue
+    if not resultados:
+        return {"empresa": None, "itens": [], "erro": "Nenhum anexo pôde ser processado."}
+    resultado = _mesclar_resultados_anexos(resultados)
+    resultado.pop("_path", None)
+    return resultado
 
 
 def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
