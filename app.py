@@ -141,7 +141,7 @@ def _normalizar_nome_empresa_curto(nome: str | None) -> str | None:
         normalizar = getattr(extract_utils, "normalizar_nome_empresa_curto", None)
         if callable(normalizar):
             resultado = normalizar(bruto)
-            if resultado:
+            if resultado and resultado.upper() not in _ROTULOS_INVALIDOS_EMPRESA:
                 return resultado
     except Exception:
         pass
@@ -156,11 +156,40 @@ def _normalizar_nome_empresa_curto(nome: str | None) -> str | None:
     texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
     ignorar = {
         "COMERCIO", "COMERCIAL", "DA", "DE", "DO", "EMPRESA", "IDENTIFICACAO",
-        "LTDA", "ME", "ORCAMENTO", "PROPOSTA", "SERVICOS", "UN", "UND", "UNIDADE",
+        "GMAIL", "HOTMAIL", "ICLOUD", "LTDA", "ME", "ORCAMENTO", "OUTLOOK", "PROPOSTA",
+        "SERVICOS", "UN", "UND", "UNIDADE", "YAHOO",
     }
     for token in re.findall(r"[A-Za-z]{2,}", texto.upper()):
         if token not in ignorar:
             return token
+    return None
+
+
+_ROTULOS_INVALIDOS_EMPRESA = {
+    "GMAIL", "HOTMAIL", "ICLOUD", "IDENTIFICACAO", "OUTLOOK", "YAHOO",
+}
+
+
+def _nomes_fornecedores_por_email(conn_proc, processo_id: int | None) -> dict[str, str]:
+    """Reutiliza os nomes já consolidados na aba Fornecedores para o mapa."""
+    if not processo_id:
+        return {}
+    try:
+        return {
+            str(f.get("email") or "").strip().lower(): str(f.get("nome") or "").strip()
+            for f in process_db.listar_fornecedores_processo(conn_proc, processo_id)
+            if (f.get("email") or "").strip() and (f.get("nome") or "").strip()
+        }
+    except Exception:
+        return {}
+
+
+def _resolver_empresa_mapa(nome_cadastrado: str | None, *candidatas: str | None) -> str | None:
+    """Escolhe um cabeçalho curto, priorizando o mesmo fornecedor da aba própria."""
+    for candidata in (nome_cadastrado, *candidatas):
+        nome = _normalizar_nome_empresa_curto(candidata)
+        if nome:
+            return nome
     return None
 
 
@@ -1073,12 +1102,18 @@ def _rebuild_map_for_process(conn_proc, conn_budget, processo_id: int, fuzzy_thr
 
     all_extractions = []
     sources = []
+    fornecedores_por_email = _nomes_fornecedores_por_email(conn_proc, processo_id)
     for reg in vinculados:
         itens = db_utils.get_items_for_file(conn_budget, reg["file_id"])
         if not itens:
             continue
         cached = db_utils.get_cached_file(conn_budget, reg["file_id"])
-        empresa = (cached or {}).get("empresa") or reg.get("nome_arquivo") or reg["file_id"]
+        nome_cadastrado = fornecedores_por_email.get((reg.get("remetente_email") or "").strip().lower())
+        empresa = _resolver_empresa_mapa(
+            nome_cadastrado,
+            (cached or {}).get("empresa"),
+            reg.get("nome_arquivo"),
+        ) or (cached or {}).get("empresa") or reg.get("nome_arquivo") or reg["file_id"]
         arquivo = reg.get("nome_arquivo") or reg["file_id"]
         all_extractions.append({"empresa": empresa, "arquivo": arquivo, "itens": itens})
         for item in itens:
@@ -2387,6 +2422,7 @@ if processar:
                 arquivos_com_ia = 0
                 custo_estimado = False
                 n_fornecedores_enriquecidos_por_orc = 0
+                fornecedores_por_email = _nomes_fornecedores_por_email(conn_proc, processo_id)
 
                 status = st.empty()
 
@@ -2431,16 +2467,13 @@ if processar:
                         and cached.get("extraction_version") == db_utils.EXTRACTION_VERSION
                     ):
                         itens = db_utils.get_items_for_file(conn_budget, file_id)
+                        nome_cadastrado = fornecedores_por_email.get(fornecedor_email_hint)
                         candidatas_empresa = (
                             cached["empresa"],
                             f.get("fornecedor_email_hint"),
                             f.get("fornecedor_nome_hint"),
                         )
-                        empresa = next(
-                            (nome for candidata in candidatas_empresa
-                             if (nome := _normalizar_nome_empresa_curto(candidata))),
-                            cached["empresa"] or f["name"],
-                        )
+                        empresa = _resolver_empresa_mapa(nome_cadastrado, *candidatas_empresa) or cached["empresa"] or f["name"]
                         cnpj_orc = (cached.get("cnpj") or "").strip()
                         telefone_orc = (cached.get("telefone") or "").strip()
                         fornecedor_email_hint = (f.get("fornecedor_email_hint") or "").strip().lower()
@@ -2521,17 +2554,14 @@ if processar:
                             )
                             continue
 
+                        nome_cadastrado = fornecedores_por_email.get(fornecedor_email_hint)
                         candidatas_empresa = (
                             result.get("empresa"),
                             f.get("fornecedor_email_hint"),
                             f.get("fornecedor_nome_hint"),
                             os.path.splitext(os.path.basename(f["name"]))[0],
                         )
-                        empresa = next(
-                            (nome for candidata in candidatas_empresa
-                             if (nome := _normalizar_nome_empresa_curto(candidata))),
-                            os.path.splitext(os.path.basename(f["name"]))[0],
-                        )
+                        empresa = _resolver_empresa_mapa(nome_cadastrado, *candidatas_empresa) or os.path.splitext(os.path.basename(f["name"]))[0]
                         cnpj_orc = (result.get("cnpj") or "").strip()
                         telefone_orc = (result.get("telefone") or "").strip()
                         itens = result.get("itens", [])
