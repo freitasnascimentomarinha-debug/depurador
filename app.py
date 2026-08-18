@@ -127,9 +127,44 @@ def _get_extract_runtime():
     """Carrega extract_utils sob demanda para reduzir risco de crash no bootstrap."""
     import extract_utils
 
+    extrair_anexos = getattr(extract_utils, "extrair_anexos_orcamento_em_camadas", None)
+    if not callable(extrair_anexos):
+        def extrair_anexos(paths, api_key, model, pre_filtrar=True, limiar_alto=85,
+                           limiar_baixo=40, lista_referencia=None):
+            """Compatibilidade temporária com módulo de extração ainda antigo."""
+            resultados = []
+            for path in paths:
+                resultado = extract_utils.extrair_orcamento_em_camadas(
+                    path, api_key, model, pre_filtrar, limiar_alto, limiar_baixo, lista_referencia
+                )
+                resultados.append(resultado)
+
+            if not resultados:
+                return {"empresa": None, "itens": [], "erro": "Nenhum anexo pôde ser processado."}
+
+            base = max(resultados, key=lambda resultado: len(resultado.get("itens") or []))
+            itens = list(base.get("itens") or [])
+            chaves = {
+                (str(item.get("numero_item") or ""), str(item.get("codigo") or ""),
+                 str(item.get("descricao") or "").strip().lower())
+                for item in itens
+            }
+            for resultado in resultados:
+                if resultado is base:
+                    continue
+                for item in resultado.get("itens") or []:
+                    chave = (
+                        str(item.get("numero_item") or ""), str(item.get("codigo") or ""),
+                        str(item.get("descricao") or "").strip().lower(),
+                    )
+                    if chave not in chaves:
+                        chaves.add(chave)
+                        itens.append(item)
+            return {**base, "itens": itens}
+
     return (
         extract_utils.extrair_orcamento_em_camadas,
-        extract_utils.extrair_anexos_orcamento_em_camadas,
+        extrair_anexos,
         extract_utils.ocr_runtime_status,
     )
 
