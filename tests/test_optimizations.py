@@ -9,7 +9,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app_config
 import db_utils
 import email_classifier
+import extract_utils
 from structured_extract import detectar_tipo_por_paginas
+
+
+def test_extrair_orcamento_em_camadas_lida_com_pdf_sem_erros():
+    pdf_path = Path("arquivos para teste/Pedido de Cotação e Modelo de Proposta PE90043-2026 (1).pdf")
+    if not pdf_path.exists():
+        pytest.skip("arquivo de teste PDF ausente")
+
+    res = extract_utils.extrair_orcamento_em_camadas(
+        str(pdf_path),
+        api_key="",
+        model="qwen/qwen3.7-flash:nitro",
+        pre_filtrar=True,
+        limiar_alto=85,
+        limiar_baixo=40,
+    )
+
+    assert res.get("erro") is None
+    assert isinstance(res.get("itens"), list)
+    assert len(res.get("itens", [])) > 0
 
 
 def test_modelo_principal_usa_qwen_nitro():

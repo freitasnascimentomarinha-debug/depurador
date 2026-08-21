@@ -23,6 +23,7 @@ from normalize_utils import (
 )
 from structured_extract import (
     detectar_tipo_e_rotear,
+    detectar_tipo_por_paginas,
     extrair_docx_estruturado,
     extrair_xlsx_estruturado,
     tentar_extracao_estrutural_pdf,
