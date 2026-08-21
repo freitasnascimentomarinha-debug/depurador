@@ -14,6 +14,8 @@ import time
 
 import requests
 
+from http_client import SESSAO
+
 DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash"
 BATCH_SIZE = 20
 
@@ -111,15 +113,15 @@ def julgar_pares(
 
         for attempt in range(max_retries + 1):
             try:
-                resp = requests.post(
+                resp = SESSAO.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers, json=payload, timeout=timeout,
+                    headers=headers, json=payload, timeout=(10, timeout),
                 )
                 if resp.status_code in (400, 404) and "response_format" in payload:
                     payload = {k: v for k, v in payload.items() if k != "response_format"}
-                    resp = requests.post(
+                    resp = SESSAO.post(
                         "https://openrouter.ai/api/v1/chat/completions",
-                        headers=headers, json=payload, timeout=timeout,
+                        headers=headers, json=payload, timeout=(10, timeout),
                     )
                 resp.raise_for_status()
                 data = resp.json()

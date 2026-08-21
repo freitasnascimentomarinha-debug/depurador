@@ -19,6 +19,8 @@ from typing import Optional
 
 import requests
 
+from http_client import SESSAO
+
 MODEL_PRICING_PER_MILLION = {
     "google/gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "openai/gpt-5-mini": {"input": 0.25, "output": 2.00},
@@ -186,6 +188,119 @@ Responda APENAS com JSON (sem markdown) no formato:
   "numero_processo": "<número extraído do assunto ou null>"
 }
 """.strip()
+
+
+def _classificar_email_via_api(payload: dict, headers: dict, timeout: int = 30):
+    resp = SESSAO.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=(10, timeout),
+    )
+    if resp.status_code in (400, 404) and "response_format" in payload:
+        payload = {k: v for k, v in payload.items() if k != "response_format"}
+        resp = SESSAO.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=(10, timeout),
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def classificar_emails_em_lote(parseds: list[dict], api_key: str, model: str) -> dict[int, dict]:
+    """Classifica vários e-mails por chamada. Mantém guardas de negócio sem perder assertividade."""
+    decisoes: dict[int, dict] = {}
+    pendentes: list[tuple[int, dict]] = []
+    for idx, parsed in enumerate(parseds):
+        tipo_heur = _heuristica(parsed)
+        if tipo_heur:
+            decisoes[idx] = {"tipo": tipo_heur, "confianca": 90, "resumo": "", "numero_processo": None, "uso_ia": False, "usage": {}}
+        else:
+            pendentes.append((idx, parsed))
+
+    if not pendentes or not api_key:
+        return decisoes
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/freitasnascimentomarinha-debug/depurador",
+    }
+    batch_size = 15
+    for inicio in range(0, len(pendentes), batch_size):
+        lote = pendentes[inicio:inicio + batch_size]
+        lote_map = {idx: parsed for idx, parsed in lote}
+        user_msg = "\n\n".join(
+            f"E-MAIL {idx}:\nAssunto: {parsed.get('assunto', '')}\nRemetente: {parsed.get('remetente_nome', '')} <{parsed.get('remetente_email', '')}>\n\nCorpo: {(parsed.get('corpo') or '')[:1500]}"
+            for idx, parsed in lote
+        )
+        schema = {
+            "name": "classificacao_emails",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "classificacoes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "tipo": {"type": "string", "enum": sorted(TIPOS_VALIDOS)},
+                                "confianca": {"type": "number"},
+                                "resumo": {"type": "string"},
+                                "numero_processo": {"type": ["string", "null"]},
+                            },
+                            "required": ["id", "tipo", "confianca", "resumo", "numero_processo"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                "required": ["classificacoes"],
+                "additionalProperties": False,
+            },
+        }
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": _PROMPT_SISTEMA},
+                {"role": "user", "content": user_msg},
+            ],
+            "max_tokens": 600,
+            "temperature": 0,
+            "usage": {"include": True},
+            "response_format": {"type": "json_schema", "json_schema": schema},
+        }
+        try:
+            data = _classificar_email_via_api(payload, headers)
+            content = data["choices"][0]["message"]["content"].strip()
+            content = re.sub(r"^```json\s*|```\s*$", "", content, flags=re.MULTILINE).strip()
+            parsed = json.loads(content)
+            for item in parsed.get("classificacoes", []):
+                idx = int(item["id"])
+                tipo = item.get("tipo", "outro")
+                if tipo not in TIPOS_VALIDOS:
+                    tipo = "outro"
+                original = lote_map.get(idx, {})
+                texto = f"{original.get('assunto', '')} {original.get('corpo', '')}"
+                if tipo == "duvida" and "?" not in texto:
+                    tipo = "outro"
+                if tipo == "duvida" and re.search(r"r\$\s?\d", (original.get("corpo") or "").lower()):
+                    tipo = "orcamento_recebido"
+                decisoes[idx] = {
+                    "tipo": tipo,
+                    "confianca": int(item.get("confianca") or 0),
+                    "resumo": str(item.get("resumo") or ""),
+                    "numero_processo": item.get("numero_processo"),
+                    "uso_ia": True,
+                    "usage": _calcular_custo(data.get("usage") or {}, model),
+                }
+        except Exception:
+            for idx, parsed in lote:
+                decisoes[idx] = {"tipo": "outro", "confianca": 0, "resumo": "Classificação indisponível.", "numero_processo": None, "uso_ia": False, "usage": {}}
+    return decisoes
 
 
 def classificar_email(

@@ -98,6 +98,14 @@ def _norm(texto: Any) -> str:
     return txt
 
 
+def detectar_tipo_por_paginas(pages: list[dict]) -> str:
+    """Decide se um PDF é texto nativo ou escaneado com base nas páginas já lidas."""
+    if not pages:
+        return "pdf_escaneado"
+    com_texto = sum(1 for p in pages if (p.get("texto") or "").strip())
+    return "pdf_texto" if com_texto >= max(1, len(pages) // 2) else "pdf_escaneado"
+
+
 def detectar_tipo_e_rotear(path: str) -> str:
     """Retorna: xlsx, csv, docx, pdf_texto, pdf_escaneado, imagem."""
     ext = os.path.splitext(path)[1].lower()
@@ -119,14 +127,10 @@ def detectar_tipo_e_rotear(path: str) -> str:
         return "pdf_escaneado"
 
     with pdfplumber.open(path) as pdf:
-        paginas = len(pdf.pages)
-        if paginas == 0:
-            return "pdf_escaneado"
-        com_texto = 0
+        paginas = []
         for page in pdf.pages:
-            if (page.extract_text() or "").strip():
-                com_texto += 1
-        return "pdf_texto" if com_texto >= max(1, paginas // 2) else "pdf_escaneado"
+            paginas.append({"texto": (page.extract_text() or "").strip()})
+        return detectar_tipo_por_paginas(paginas)
 
 
 def _detectar_linha_cabecalho(rows: list[list[Any]]) -> int | None:

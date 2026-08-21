@@ -4,17 +4,22 @@ e interpretação estruturada via LLM (OpenRouter).
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
 import re
 import shutil
+import threading
 import time
 import csv
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 
 import requests
+
+from http_client import SESSAO
 
 from confidence import calcular_confianca_estrutural
 from normalize_utils import (
@@ -59,6 +64,22 @@ ESCALATION_MODEL = "openai/gpt-5.6-luna"
 
 _OCR_MIN_ALNUM = 25
 _OCR_MIN_TOKENS = 6
+_PAGINAS_CACHE: dict[str, list[dict]] = {}
+_PAGINAS_CACHE_LOCK = threading.Lock()
+_OCR_SEMAFORO = threading.BoundedSemaphore(max(1, (os.cpu_count() or 4)))
+
+
+def _chave_arquivo(path: str) -> str:
+    st_ = os.stat(path)
+    return f"{os.path.abspath(path)}|{st_.st_size}|{st_.st_mtime_ns}"
+
+
+def _sha256_arquivo(path: str, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for bloco in iter(lambda: fh.read(chunk), b""):
+            h.update(bloco)
+    return h.hexdigest()
 
 
 def _to_int(value) -> int:
@@ -189,20 +210,21 @@ def _preferir_texto_ocr(texto_pdf: str, texto_ocr: str) -> bool:
 
 
 def _ocr_image(image_obj, ocr_lang: str = "por") -> tuple[str, str | None]:
-    ok_ocr, erro_ocr = ocr_runtime_status()
-    if not ok_ocr:
-        return "", erro_ocr
+    with _OCR_SEMAFORO:
+        ok_ocr, erro_ocr = ocr_runtime_status()
+        if not ok_ocr:
+            return "", erro_ocr
 
-    pytesseract = _import_pytesseract()
-    last_error = None
-    for lang in _ocr_lang_candidates(ocr_lang):
-        try:
-            texto = pytesseract.image_to_string(image_obj, lang=lang)
-            if texto and texto.strip():
-                return texto.strip(), None
-        except Exception as exc:
-            last_error = str(exc)
-    return "", last_error
+        pytesseract = _import_pytesseract()
+        last_error = None
+        for lang in _ocr_lang_candidates(ocr_lang):
+            try:
+                texto = pytesseract.image_to_string(image_obj, lang=lang)
+                if texto and texto.strip():
+                    return texto.strip(), None
+            except Exception as exc:
+                last_error = str(exc)
+        return "", last_error
 
 
 def extract_text_from_image(path: str, ocr_lang: str = 'por') -> tuple[str, str | None]:
@@ -577,11 +599,11 @@ def _call_openrouter_extract_once(text: str, api_key: str, model: str = None,
     last_error = "erro desconhecido"
     for attempt in range(max_retries):
         try:
-            resp = requests.post(url, headers=headers, json=_montar_payload(usar_schema), timeout=120)
+            resp = SESSAO.post(url, headers=headers, json=_montar_payload(usar_schema), timeout=(10, 120))
             if resp.status_code in (400, 404) and usar_schema:
                 # Provedor/modelo sem suporte a structured outputs: refaz sem schema
                 usar_schema = False
-                resp = requests.post(url, headers=headers, json=_montar_payload(False), timeout=120)
+                resp = SESSAO.post(url, headers=headers, json=_montar_payload(False), timeout=(10, 120))
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
@@ -736,10 +758,10 @@ def call_openrouter_vision_extract(imagens: list[bytes], api_key: str, model: st
     last_error = "erro desconhecido"
     for attempt in range(max_retries + 1):
         try:
-            resp = requests.post(url, headers=headers, json=_payload(usar_schema), timeout=180)
+            resp = SESSAO.post(url, headers=headers, json=_payload(usar_schema), timeout=(10, 180))
             if resp.status_code in (400, 404) and usar_schema:
                 usar_schema = False
-                resp = requests.post(url, headers=headers, json=_payload(False), timeout=180)
+                resp = SESSAO.post(url, headers=headers, json=_payload(False), timeout=(10, 180))
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
@@ -767,6 +789,11 @@ def call_openrouter_vision_extract(imagens: list[bytes], api_key: str, model: st
 
 
 def _extract_text_pages_pdf(path: str, ocr_lang: str = "por"):
+    chave = _chave_arquivo(path)
+    with _PAGINAS_CACHE_LOCK:
+        if chave in _PAGINAS_CACHE:
+            return _PAGINAS_CACHE[chave]
+
     pdfplumber = _import_pdfplumber()
     pages = []
     with pdfplumber.open(path) as pdf:
@@ -790,6 +817,8 @@ def _extract_text_pages_pdf(path: str, ocr_lang: str = "por"):
                 "tentou_ocr": tentou_ocr,
                 "erro_ocr": erro_ocr,
             })
+    with _PAGINAS_CACHE_LOCK:
+        _PAGINAS_CACHE[chave] = pages
     return pages
 
 
@@ -1241,7 +1270,11 @@ def extrair_orcamento_em_camadas(path: str, api_key: str, model: str,
     checagem), nunca para pular a IA por completo. `lista_referencia` (itens
     oficiais da solicitacao de orcamento/edital) e passada a IA para ajudar
     a casar itens de fornecedores diferentes mesmo com nomenclatura distinta."""
-    tipo = detectar_tipo_e_rotear(path)
+    if os.path.splitext(path)[1].lower() == ".pdf":
+        pages = _extract_text_pages_pdf(path)
+        tipo = detectar_tipo_por_paginas(pages)
+    else:
+        tipo = detectar_tipo_e_rotear(path)
     nome_arquivo = os.path.basename(path)
     review = []
     confianca = None

@@ -28,7 +28,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
             telefone TEXT,
             modified_time TEXT,
             extraction_version TEXT,
-            processado_em TEXT
+            processado_em TEXT,
+            content_sha256 TEXT
         )
     """)
     conn.execute("""
@@ -55,6 +56,8 @@ def _init_db(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE arquivos ADD COLUMN cnpj TEXT")
     if "telefone" not in colunas_arquivos:
         conn.execute("ALTER TABLE arquivos ADD COLUMN telefone TEXT")
+    if "content_sha256" not in colunas_arquivos:
+        conn.execute("ALTER TABLE arquivos ADD COLUMN content_sha256 TEXT")
 
     colunas_itens = {
         row[1] for row in conn.execute("PRAGMA table_info(itens)").fetchall()
@@ -66,21 +69,30 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_cached_file(conn: sqlite3.Connection, file_id: str):
-    """Retorna {'modified_time', 'empresa', 'nome'} se o arquivo já foi processado antes, senão None."""
+def get_cached_file(conn: sqlite3.Connection, file_id: str, content_sha256: str | None = None):
+    """Retorna o cache por file_id ou, em fallback, por hash do conteúdo."""
     cur = conn.execute(
-        "SELECT modified_time, empresa, nome, extraction_version, cnpj, telefone FROM arquivos WHERE file_id = ?", (file_id,)
+        "SELECT file_id, modified_time, empresa, nome, extraction_version, cnpj, telefone, content_sha256 FROM arquivos WHERE file_id = ?",
+        (file_id,),
     )
     row = cur.fetchone()
+    if row is None and content_sha256:
+        cur = conn.execute(
+            "SELECT file_id, modified_time, empresa, nome, extraction_version, cnpj, telefone, content_sha256 FROM arquivos WHERE content_sha256 = ? ORDER BY processado_em DESC LIMIT 1",
+            (content_sha256,),
+        )
+        row = cur.fetchone()
     if row is None:
         return None
     return {
-        "modified_time": row[0],
-        "empresa": row[1],
-        "nome": row[2],
-        "extraction_version": row[3],
-        "cnpj": row[4],
-        "telefone": row[5],
+        "file_id": row[0],
+        "modified_time": row[1],
+        "empresa": row[2],
+        "nome": row[3],
+        "extraction_version": row[4],
+        "cnpj": row[5],
+        "telefone": row[6],
+        "content_sha256": row[7],
     }
 
 
@@ -106,12 +118,13 @@ def get_items_for_file(conn: sqlite3.Connection, file_id: str):
 
 
 def save_extraction(conn: sqlite3.Connection, file_id: str, nome: str, empresa: str,
-                     modified_time: str, itens: list, cnpj: str = "", telefone: str = "") -> None:
+                     modified_time: str, itens: list, cnpj: str = "", telefone: str = "",
+                     content_sha256: str | None = None) -> None:
     conn.execute("DELETE FROM itens WHERE file_id = ?", (file_id,))
     conn.execute("DELETE FROM arquivos WHERE file_id = ?", (file_id,))
     conn.execute(
-        "INSERT INTO arquivos (file_id, nome, empresa, cnpj, telefone, modified_time, extraction_version, processado_em) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO arquivos (file_id, nome, empresa, cnpj, telefone, modified_time, extraction_version, processado_em, content_sha256) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             file_id,
             nome,
@@ -121,6 +134,7 @@ def save_extraction(conn: sqlite3.Connection, file_id: str, nome: str, empresa: 
             modified_time,
             EXTRACTION_VERSION,
             datetime.now(timezone.utc).isoformat(),
+            content_sha256 or "",
         ),
     )
     for item in itens:

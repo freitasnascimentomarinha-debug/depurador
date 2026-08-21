@@ -2163,6 +2163,30 @@ if processar:
                                 f"'{template_anexo_nome}': {len(auto_referencia)} item(ns)."
                             )
 
+                    # classifica em lote os e-mails que ficaram pendentes após heurística.
+                    pendentes_classificacao = []
+                    for idx, parsed in enumerate(parsed_emls):
+                        rem_email = parsed.get("remetente_email", "")
+                        rem_nome = parsed.get("remetente_nome", "")
+                        if classificar_emails_com_ia and not email_classifier._heuristica(parsed):
+                            pendentes_classificacao.append((idx, parsed))
+
+                    lotes_classificados = {}
+                    if classificar_emails_com_ia and pendentes_classificacao:
+                        for idx, parsed in pendentes_classificacao:
+                            pass
+                        for idx, parsed in pendentes_classificacao:
+                            lote = [p for p in pendentes_classificacao if p[0] == idx]
+                            if lote:
+                                continue
+                        for inicio in range(0, len(pendentes_classificacao), 15):
+                            lote = pendentes_classificacao[inicio:inicio + 15]
+                            resultados_lote = email_classifier.classificar_emails_em_lote(
+                                [p[1] for p in lote], api_key, model
+                            )
+                            for pos, parsed_lote in enumerate(lote):
+                                lotes_classificados[parsed_lote[0]] = resultados_lote.get(pos, {"tipo": "outro", "confianca": 0, "resumo": "", "numero_processo": None, "uso_ia": True, "usage": {}})
+
                     for parsed in parsed_emls:
                         rem_email = parsed.get("remetente_email", "")
                         rem_nome = parsed.get("remetente_nome", "")
@@ -2206,7 +2230,19 @@ if processar:
                                 add_log(
                                     f"OpenRouter: classificando e-mail com modelo principal {model}."
                                 )
-                                clf = email_classifier.classificar_email(parsed, api_key, model)
+                                tipo_heur = email_classifier._heuristica(parsed)
+                                if tipo_heur:
+                                    clf = {
+                                        "tipo": tipo_heur,
+                                        "confianca": 90,
+                                        "resumo": "",
+                                        "numero_processo": None,
+                                        "uso_ia": False,
+                                        "usage": {},
+                                    }
+                                else:
+                                    idx_parsed = next((i for i, p in enumerate(parsed_emls) if p is parsed), None)
+                                    clf = lotes_classificados.get(idx_parsed, email_classifier.classificar_email(parsed, api_key, model))
                                 if clf.get("uso_ia"):
                                     add_log(
                                         f"OpenRouter: classificação concluída ({clf.get('tipo') or 'outro'}, "
