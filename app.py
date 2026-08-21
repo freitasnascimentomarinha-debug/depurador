@@ -914,7 +914,7 @@ def _enriquecer_fornecedores_por_orcamentos(conn_proc, conn_budget, processo_id:
                         ai_used = False
                         if need_ai:
                             try:
-                                model_name = st.session_state.get('cfg_model', 'deepseek/deepseek-v4-flash')
+                                model_name = st.session_state.get('cfg_model', 'deepseek/deepseek-v4-flash-0731:nitro')
                                 ai_cnpj, ai_tel = _call_ai_extract(texto, empresa or nome_anx, api_key, model_name)
                                 if ai_cnpj and not final_cnpj and _validar_cnpj(ai_cnpj):
                                     final_cnpj = ai_cnpj
@@ -1519,7 +1519,7 @@ if "show_sidebar_item3" not in st.session_state:
     st.session_state.show_sidebar_item3 = False
 if "show_sidebar_item4" not in st.session_state:
     st.session_state.show_sidebar_item4 = False
-st.session_state.cfg_model = "deepseek/deepseek-v4-flash"
+st.session_state.cfg_model = "deepseek/deepseek-v4-flash-0731:nitro"
 if "cfg_classificar_emails_com_ia" not in st.session_state:
     st.session_state.cfg_classificar_emails_com_ia = True
 if "cfg_usar_ia_juiz" not in st.session_state:
@@ -1650,7 +1650,7 @@ if pagina_sidebar == "Configurações":
         )
 
     with aba_ia_cfg:
-        st.caption("Modelo principal: deepseek/deepseek-v4-flash")
+        st.caption("Modelo principal: deepseek/deepseek-v4-flash-0731:nitro")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
         st.checkbox("IA juiz: decidir casamentos na zona cinzenta (score 60-84)", key="cfg_usar_ia_juiz", help="Usa IA para decidir pares ambíguos e reduzir casamentos incorretos.")
         st.checkbox("Classificar e-mails com IA quando heurística não for suficiente", key="cfg_classificar_emails_com_ia", help="Só chama a IA quando as regras locais não conseguem classificar a mensagem.")
@@ -1671,7 +1671,7 @@ if pagina_sidebar == "Configurações":
         st.slider("Confiança mínima do consenso", min_value=60, max_value=100, key="cfg_consensus_threshold", help="Similaridade mínima entre descrições para formar consenso. Recomendado: 80.")
 
     with aba_administracao:
-        st.caption("Modelo principal: deepseek/deepseek-v4-flash")
+        st.caption("Modelo principal: deepseek/deepseek-v4-flash-0731:nitro")
         st.caption("Modelo forte: openai/gpt-5.6-luna")
 
         st.divider()
