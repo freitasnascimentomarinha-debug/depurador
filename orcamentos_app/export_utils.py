@@ -1,5 +1,5 @@
 """
-Geração da planilha .xlsx final: mapa comparativo, aba de revisão e aba de fontes.
+Geração da planilha .xlsx final: mapa comparativo.
 """
 import io
 from datetime import date
@@ -22,7 +22,7 @@ def _thin_border():
     return Border(left=side, right=side, top=side, bottom=side)
 
 
-def build_excel(rows, matrix, empresas, review, sources):
+def build_excel(rows, matrix, empresas):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Mapa Comparativo"
@@ -116,52 +116,6 @@ def build_excel(rows, matrix, empresas, review, sources):
     for col in range(5, n_cols + 1):
         ws.column_dimensions[get_column_letter(col)].width = 22
     ws.freeze_panes = "E3"
-
-    # Aba de revisão manual (casamentos incertos por descrição ou por inconsistência de número)
-    ws_rev = wb.create_sheet("Revisar Casamentos")
-    ws_rev.append(["Tipo", "Nº Item", "Descrição Nova", "Casou Com", "Score de Similaridade"])
-    for cell in ws_rev[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-    for r in review:
-        ws_rev.append([
-            r.get("tipo", ""),
-            r.get("numero_item"),
-            r["descricao_nova"],
-            r["casou_com"],
-            r["score"],
-        ])
-    ws_rev.column_dimensions["A"].width = 30
-    ws_rev.column_dimensions["B"].width = 12
-    ws_rev.column_dimensions["C"].width = 45
-    ws_rev.column_dimensions["D"].width = 45
-    ws_rev.column_dimensions["E"].width = 20
-
-    # Aba de rastreabilidade (empresa -> arquivo -> fonte -> localizacao)
-    ws_src = wb.create_sheet("Fontes")
-    ws_src.append(["Empresa", "Arquivo de Origem", "Fonte de Extração", "Localização", "Nº Item", "Descrição"])
-    for cell in ws_src[1]:
-        cell.font = header_font
-        cell.fill = header_fill
-    for src in sources:
-        if isinstance(src, dict):
-            ws_src.append([
-                src.get("empresa"),
-                src.get("arquivo"),
-                src.get("fonte_extracao"),
-                src.get("origem"),
-                src.get("numero_item"),
-                src.get("descricao"),
-            ])
-        else:
-            empresa, arquivo = src
-            ws_src.append([empresa, arquivo, None, None, None, None])
-    ws_src.column_dimensions["A"].width = 35
-    ws_src.column_dimensions["B"].width = 45
-    ws_src.column_dimensions["C"].width = 22
-    ws_src.column_dimensions["D"].width = 22
-    ws_src.column_dimensions["E"].width = 12
-    ws_src.column_dimensions["F"].width = 50
 
     buffer = io.BytesIO()
     wb.save(buffer)

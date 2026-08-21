@@ -1140,7 +1140,6 @@ def _rebuild_map_for_process(conn_proc, conn_budget, processo_id: int, fuzzy_thr
         return None
 
     all_extractions = []
-    sources = []
     fornecedores_por_email = _nomes_fornecedores_por_email(conn_proc, processo_id)
     for reg in vinculados:
         itens = db_utils.get_items_for_file(conn_budget, reg["file_id"])
@@ -1155,15 +1154,6 @@ def _rebuild_map_for_process(conn_proc, conn_budget, processo_id: int, fuzzy_thr
         ) or (cached or {}).get("empresa") or reg.get("nome_arquivo") or reg["file_id"]
         arquivo = reg.get("nome_arquivo") or reg["file_id"]
         all_extractions.append({"empresa": empresa, "arquivo": arquivo, "itens": itens})
-        for item in itens:
-            sources.append({
-                "empresa": empresa,
-                "arquivo": arquivo,
-                "fonte_extracao": item.get("fonte_extracao", "cache"),
-                "origem": item.get("origem", "desconhecida"),
-                "numero_item": item.get("numero_item"),
-                "descricao": item.get("descricao"),
-            })
 
     if not all_extractions:
         return None
@@ -1194,7 +1184,7 @@ def _rebuild_map_for_process(conn_proc, conn_budget, processo_id: int, fuzzy_thr
     )
     item_cobertura = _build_item_cobertura(rows, matrix, base_meta=3)
     empresas = sorted({e["empresa"] for e in all_extractions})
-    excel_buffer = build_excel(rows, matrix, empresas, review, sources) if rows else None
+    excel_buffer = build_excel(rows, matrix, empresas) if rows else None
     return {
         "excel_buffer": excel_buffer,
         "rows_count": len(rows),
@@ -2435,7 +2425,6 @@ if processar:
                 # -----------------------------------------------------------
                 conn_budget = db_utils.get_connection(budget_db_path)
                 all_extractions = []
-                sources = []
                 review_extracao = []
                 falhas = []
                 avisos_truncamento = []
@@ -2532,15 +2521,6 @@ if processar:
                                     cnpj_orc,
                                     telefone_orc,
                                 )
-                        for item in itens:
-                            sources.append({
-                                "empresa": empresa,
-                                "arquivo": f["name"],
-                                "fonte_extracao": item.get("fonte_extracao", "cache"),
-                                "origem": item.get("origem", f.get("origem", "desconhecida")),
-                                "numero_item": item.get("numero_item"),
-                                "descricao": item.get("descricao"),
-                            })
                         n_budget_cache += 1
                         _set_pipeline_progress(
                             0.35 + (0.55 * ((i + 1) / max(1, len(budget_candidates)))),
@@ -2621,16 +2601,6 @@ if processar:
                             "fonte": result.get("fonte_processamento", "ia"),
                             "confianca": result.get("confianca_estrutural"),
                         })
-
-                        for item in itens:
-                            sources.append({
-                                "empresa": empresa,
-                                "arquivo": f["name"],
-                                "fonte_extracao": item.get("fonte_extracao", result.get("fonte_processamento", "ia")),
-                                "origem": item.get("origem", f.get("origem", "desconhecida")),
-                                "numero_item": item.get("numero_item"),
-                                "descricao": item.get("descricao"),
-                            })
 
                         db_utils.save_extraction(
                             conn_budget,
@@ -2757,7 +2727,7 @@ if processar:
                         )
 
                     if rows:
-                        excel_buffer = build_excel(rows, matrix, empresas, review, sources)
+                        excel_buffer = build_excel(rows, matrix, empresas)
                 else:
                     item_cobertura = []
 

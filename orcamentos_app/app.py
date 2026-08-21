@@ -333,7 +333,6 @@ if processar:
 
             add_log(f"Iniciando processamento de {len(files)} arquivo(s).")
             all_extractions = []
-            sources = []
             review_extracao = []
             falhas = []
             diagnostico_arquivos = []
@@ -372,15 +371,6 @@ if processar:
                         "fonte": "cache",
                         "confianca": cached.get("extraction_version"),
                     })
-                    for item in itens:
-                        sources.append({
-                            "empresa": empresa,
-                            "arquivo": f['name'],
-                            "fonte_extracao": item.get("fonte_extracao", "cache"),
-                            "origem": item.get("origem", "desconhecida"),
-                            "numero_item": item.get("numero_item"),
-                            "descricao": item.get("descricao"),
-                        })
                     n_do_cache += 1
                     progress.progress((i + 1) / len(files))
                     continue
@@ -434,15 +424,6 @@ if processar:
                         "fonte": result.get("fonte_processamento", "ia"),
                         "confianca": result.get("confianca_estrutural"),
                     })
-                    for item in itens:
-                        sources.append({
-                            "empresa": empresa,
-                            "arquivo": f['name'],
-                            "fonte_extracao": item.get("fonte_extracao", result.get("fonte_processamento", "ia")),
-                            "origem": item.get("origem", "desconhecida"),
-                            "numero_item": item.get("numero_item"),
-                            "descricao": item.get("descricao"),
-                        })
                     db_utils.save_extraction(conn, file_id, f['name'], empresa, modified_time, itens)
                     n_novos += 1
                 except Exception as exc:
@@ -481,7 +462,7 @@ if processar:
                 st.stop()
 
             add_log("Gerando arquivo Excel final.")
-            excel_buffer = build_excel(rows, matrix, empresas, review, sources)
+            excel_buffer = build_excel(rows, matrix, empresas)
 
             st.success("✅ Processamento concluído!")
             col1, col2, col3, col4 = st.columns(4)
