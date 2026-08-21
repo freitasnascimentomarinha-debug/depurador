@@ -23,7 +23,7 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_
 
 _DEFAULTS = {
     "openrouter_api_key": "",
-    "modelo": "qwen/qwen3.5-flash-02-23",
+    "modelo": "deepseek/deepseek-v4-flash",
     "modelo_escalonamento": "openai/gpt-5.6-luna",
     "usar_ia_juiz": True,
     "classificar_emails_com_ia": True,

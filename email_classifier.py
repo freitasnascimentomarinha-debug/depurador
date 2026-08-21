@@ -29,7 +29,7 @@ MODEL_PRICING_PER_MILLION = {
 }
 
 # Classificacao usa o mesmo modelo principal configurado para o sistema.
-DEFAULT_CLASSIFIER_MODEL = "qwen/qwen3.5-flash-02-23"
+DEFAULT_CLASSIFIER_MODEL = "deepseek/deepseek-v4-flash"
 
 # JSON Schema para structured outputs na classificacao
 CLASSIFICATION_JSON_SCHEMA = {
