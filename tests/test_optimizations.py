@@ -6,9 +6,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import app_config
 import db_utils
 import email_classifier
 from structured_extract import detectar_tipo_por_paginas
+
+
+def test_modelo_principal_usa_qwen_nitro():
+    assert app_config.PRIMARY_MODEL == "qwen/qwen3.7-flash:nitro"
 
 
 def test_detectar_tipo_por_paginas_prefers_text_when_majority_pages_have_text():
