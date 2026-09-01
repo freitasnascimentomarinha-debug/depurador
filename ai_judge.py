@@ -16,7 +16,7 @@ import requests
 
 from http_client import SESSAO
 
-DEFAULT_JUDGE_MODEL = "qwen/qwen3.7-flash:nitro"
+DEFAULT_JUDGE_MODEL = "deepseek/deepseek-v4-flash-0731"
 BATCH_SIZE = 20
 
 _SYSTEM_PROMPT = """Você é um especialista em compras públicas e catalogação de materiais.

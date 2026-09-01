@@ -57,7 +57,7 @@ MODEL_PRICING_PER_MILLION = {
 }
 
 # Modelo padrao de extracao: rapido, com suporte a structured outputs.
-DEFAULT_EXTRACTION_MODEL = "qwen/qwen3.7-flash:nitro"
+DEFAULT_EXTRACTION_MODEL = "deepseek/deepseek-v4-flash-0731"
 
 # Escalonamento: quando o modelo barato falha ou extrai zero itens, uma unica
 # retentativa com modelo forte (pago so nos ~5% de documentos dificeis).

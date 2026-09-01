@@ -21,7 +21,7 @@ def test_extrair_orcamento_em_camadas_lida_com_pdf_sem_erros():
     res = extract_utils.extrair_orcamento_em_camadas(
         str(pdf_path),
         api_key="",
-        model="qwen/qwen3.7-flash:nitro",
+        model="deepseek/deepseek-v4-flash-0731",
         pre_filtrar=True,
         limiar_alto=85,
         limiar_baixo=40,
@@ -32,8 +32,8 @@ def test_extrair_orcamento_em_camadas_lida_com_pdf_sem_erros():
     assert len(res.get("itens", [])) > 0
 
 
-def test_modelo_principal_usa_qwen_nitro():
-    assert app_config.PRIMARY_MODEL == "qwen/qwen3.7-flash:nitro"
+def test_modelo_principal_usa_deepseek_v4_flash_0731():
+    assert app_config.PRIMARY_MODEL == "deepseek/deepseek-v4-flash-0731"
 
 
 def test_detectar_tipo_por_paginas_prefers_text_when_majority_pages_have_text():

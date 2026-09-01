@@ -7,7 +7,7 @@ from pathlib import Path
 
 TGZ_PATH = Path('arquivos para teste') / 'teste-171.tgz'
 OPENROUTER_KEY = os.environ.get('OPENROUTER_API_KEY') or os.environ.get('OPENROUTER_KEY') or os.environ.get('OPENAI_API_KEY')
-MODEL_NAME = os.environ.get('TEST_MODEL') or 'google/gemini-2.5-flash'
+MODEL_NAME = os.environ.get('TEST_MODEL') or 'deepseek/deepseek-v4-flash-0731'
 
 CNPJ_RE = re.compile(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}")
 PHONE_RE = re.compile(r"(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d{4,5}[\s.-]?\d{4}")

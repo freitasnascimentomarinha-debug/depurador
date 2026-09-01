@@ -11,7 +11,7 @@ A filosofia do sistema: **código determinístico é o esqueleto; a IA é usada 
 
 ## 🆕 Novidades desta versão (jul/2026)
 
-- **Correção crítica**: o modelo padrão era `deepseek/deepseek-v4-flash`, um slug **inexistente** no OpenRouter — toda chamada de IA com o padrão falhava. Novo padrão: `google/gemini-2.5-flash` (alternativas no seletor: `deepseek/deepseek-chat-v3.2` e `openai/gpt-5-mini`).
+- **Modelo principal atualizado**: o sistema usa `deepseek/deepseek-v4-flash-0731` como modelo principal no OpenRouter e mantém `openai/gpt-5.6-luna` como fallback forte para escalonamento.
 - **Structured outputs**: extração e classificação agora enviam `response_format` com JSON Schema estrito (`temperature 0`), eliminando o parsing frágil de respostas em markdown. Se o provedor não suportar, o sistema refaz a chamada sem schema automaticamente.
 - **Custo real por chamada**: o payload pede `usage: {include: true}` e o OpenRouter devolve o custo exato — a tabela de preços hardcoded virou apenas estimativa de reserva.
 - **Template em branco barrado por hash**: anexos de fornecedor cujo hash de conteúdo é idêntico ao do arquivo-modelo enviado pelo órgão são descartados como "não é orçamento" (lição do processo PE-90043/2026).
@@ -134,7 +134,7 @@ Quatro mecanismos aproximam o sistema do comportamento de um analista com julgam
 
 **2. IA juiz na zona cinzenta (`ai_judge.py`).** Pares de descrições com similaridade 60–84 — parecidos demais para ignorar, diferentes demais para casar no automático — são enviados em lote (até 20 pares por chamada) para o LLM decidir, com salvaguardas determinísticas: só itens sem número, empresas disjuntas, UF compatível, e na dúvida o juiz é instruído a *não* casar (falso positivo em mapa oficial é pior que falso negativo). Fusões aprovadas ficam registradas na aba de revisão com a confiança declarada.
 
-**3. Escalonamento de modelo (`extract_utils.py`).** Se a extração com o modelo barato falha ou traz zero itens, o sistema reextrai automaticamente uma única vez com o modelo forte (`google/gemini-2.5-pro`). Resultado: qualidade de modelo caro nos ~5% de documentos difíceis, custo de modelo barato nos 95% restantes.
+**3. Escalonamento de modelo (`extract_utils.py`).** Se a extração com o modelo principal falha ou traz zero itens, o sistema reextrai automaticamente uma única vez com o modelo forte (`openai/gpt-5.6-luna`). Resultado: qualidade de modelo forte nos documentos difíceis, custo de modelo principal no restante.
 
 **4. Autoverificação pré-entrega (`sanity_check.py`).** Antes de entregar o mapa, checagens determinísticas replicam o "olhar o resultado antes de enviar": coluna de fornecedor sem nenhum preço (falha de extração silenciosa), unitário × qtde ≠ total impresso (erro do fornecedor — sinalizado, nunca corrigido), fornecedores com nomes quase idênticos (coluna duplicada), linha com preço sem descrição, extração que produziu zero itens. Tudo vai para o log e para um aviso na interface.
 
@@ -205,7 +205,7 @@ Manter o Tesseract como primeira linha (grátis, local, privado, suficiente no c
 
 ## 🤖 Mapa das IAs: quando, como e quais modelos são acionados
 
-Pergunta frequente: "é um modelo só ou vários?". A resposta: a arquitetura tem **dois "slots" de modelo** — o **principal** (barato, padrão `google/gemini-2.5-flash`) e o **forte** (padrão `google/gemini-2.5-pro`) — mas o principal é reutilizado em **cinco papéis diferentes**. Ou seja: vários acionamentos, poucos modelos. Ambos os slots são trocáveis pelo administrador (Configurações → Administração) sem mexer em código, pois tudo passa pelo OpenRouter com a mesma interface.
+Pergunta frequente: "é um modelo só ou vários?". A resposta: a arquitetura tem **dois "slots" de modelo** — o **principal** (padrão `deepseek/deepseek-v4-flash-0731`) e o **forte** (padrão `openai/gpt-5.6-luna`) — mas o principal é reutilizado em **cinco papéis diferentes**. Ou seja: vários acionamentos, poucos modelos. Ambos os slots são definidos na configuração administrada do app e passam pelo OpenRouter com a mesma interface.
 
 ### Os cinco pontos de acionamento
 
@@ -355,7 +355,7 @@ Chave da API: crie conta em https://openrouter.ai/, gere a chave em https://open
 
 Com a **configuração administrada ativa** (recomendado): o usuário só (1) envia os arquivos — pacote `.tgz`/`.zip` com `.eml` e/ou orçamentos avulsos PDF/Word/Excel, (2) opcionalmente sobe a tabela mestre `.xlsx`/`.csv` com colunas `numero_item` e `descricao` — e, se houver, a coluna de **código do material** (PI/NSN/Part Number), que torna o casamento praticamente infalível e (3) clica em **Processar orçamentos**. Chave e modelos já vêm da administração.
 
-Sem configuração administrada, aparece também o passo de colar a chave OpenRouter e escolher o modelo na barra lateral (padrão `google/gemini-2.5-flash`). Em ambos os casos: ao final, baixe o Mapa Comparativo na aba principal, revise e salve decisões de casamento na seção "Revisão de casamentos" (elas viram regras permanentes), e gere o Relatório Gerencial (`.docx` ou PDF) na aba de relatório.
+Sem configuração administrada, aparece também o passo de colar a chave OpenRouter na barra lateral; o modelo principal permanece fixado em `deepseek/deepseek-v4-flash-0731`. Em ambos os casos: ao final, baixe o Mapa Comparativo na aba principal, revise e salve decisões de casamento na seção "Revisão de casamentos" (elas viram regras permanentes), e gere o Relatório Gerencial (`.docx` ou PDF) na aba de relatório.
 
 ## 🧪 Checklist antes de usar em produção
 
